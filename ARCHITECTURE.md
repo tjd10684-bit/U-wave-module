@@ -9,7 +9,7 @@ multi-instrument behavior below is a design boundary, not implemented support.
 
 ```text
 Host-supplied assets -> visual linking window <- IR/RI/TI receiver discovery
-                                  |
+                                  |           <- DR latest values, forwarded DATA presses
                       local asset UUID -> Device ID links
 ```
 
@@ -18,6 +18,19 @@ supplied equipment, with optional balloon labels, and records one-to-one links.
 The host remains responsible for supplying the current part's eligible assets.
 Discovery runs off the Tk thread and closes the COM port after scanning. Each
 scan invalidates previous availability; failure leaves links unverified.
+
+To help the operator tell instruments apart, Read Values requests each Event
+driven transmitter's latest value once per click; it opens and closes the port
+like a scan. Identify and Link All hold the port in a worker thread, requesting
+those values about once a second and listening for DATA presses that the
+receiver forwards from Button driven transmitters. The first values read for
+each asset are its baseline: a single transmitter whose value then changes, or
+whose DATA button is pressed, is linked to it. Several responders, or one linked
+elsewhere, link nothing. Answers that may belong to an earlier asset (received
+before the current asset's baseline) are discarded. Scans, value reads and
+identification take turns on the port through one process-wide lock, because
+Windows opens a COM port exclusively. DR requests are answered from the
+receiver's stored values, so reading does not wake transmitters.
 
 Saved addresses can follow a Device ID to another channel. A capture provider
 must revalidate the source and mode at acquisition time; a saved link or a green

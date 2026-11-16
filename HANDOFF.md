@@ -35,6 +35,14 @@ instrument. Two-instrument correction and Bluetooth remain future work.
   Manufacturer drivers remain external; the direct USB route is not implemented.
 - The setup GUI accepts assets supplied by the ERP on the right, scans registered
   transmitters on the left, and supports dragging or click-then-click linking.
+- To tell identical instruments apart, **Read Values** shows each Event driven
+  transmitter's latest value once per click and highlights what changed.
+  **Identify** and **Link All** link an asset to the single transmitter whose
+  reading changes or whose DATA button is pressed when that asset is asked for.
+  Answers from before the asset's baseline values, several responders, or one
+  linked elsewhere link nothing. The receiver client passes unsolicited packets
+  (forwarded DATA presses) to a callback and can listen without a request.
+  Values come from the receiver's store, so reading does not wake transmitters.
 - One-to-one links use asset UUID and transmitter Device ID. Group/channel are
   last-seen addresses, not identities. Settings are local to the Windows user
   at `%LOCALAPPDATA%\UWaveAccessory\links.json`, not shared ERP inventory.
@@ -145,6 +153,9 @@ workstation into a new installation. Discover and confirm them locally.
 9. Exercise latest-value requests separately before connecting a capture provider.
    Verify unchanged readings, missing data, status, units, reconnects and late
    replies. A PC response timestamp is not the physical measurement time.
+   Then try Read Values, Identify and Link All: confirm a Button driven DATA
+   press reaches the PC over the VCP, and how noisy instruments behave (no change
+   threshold is applied).
 10. Perform the relevant [validation checks](VALIDATION_PLAN.md). Do not enable
     production capture until request correlation, reconnection and source
     verification are sound. Bluetooth/mixed operation needs separate work.

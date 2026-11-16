@@ -47,6 +47,11 @@ with the request's channel field.
 | Button driven | Pressing DATA sends a reading; the receiver forwards it to the PC | Suitable for the existing keyboard-input route |
 | Event driven | Changes are sent to the receiver, which stores readings for a PC request | Supports software-requested latest-value collection, not guaranteed fresh simultaneous sampling |
 
+The setup window's Identify relies on these: a changed stored value for Event
+driven transmitters, and a forwarded DT packet (received without a request) for a
+Button driven DATA press. Receiving forwarded presses through the virtual COM
+port has not yet been verified on hardware.
+
 For the legacy transmitter, a short DATA press is under 2 seconds. Holding for
 2 to less than 5 seconds sends a cancel command in Button driven mode. A hold of
 5 to less than 10 seconds runs a receiver scan. Do not turn a pedal trigger into

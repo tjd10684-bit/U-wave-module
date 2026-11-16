@@ -1,4 +1,7 @@
+from datetime import datetime, timezone
+from decimal import Decimal
 import gc
+import queue
 import threading
 import time
 from types import SimpleNamespace
@@ -9,7 +12,8 @@ import pytest
 
 from uwave_accessory import setup_window
 from uwave_accessory.links import AccessoryConfig, ConfigStore, Link
-from uwave_accessory.protocol import MeasurementMode
+from uwave_accessory.protocol import DataRequest, MeasurementMode, MeasurementPacket
+from uwave_accessory.receiver import LatestReading
 from uwave_accessory.serial_transport import PortInfo, TransportError
 from uwave_accessory.setup_window import SetupWindow
 from uwave_accessory.simulation import SimulatedReceiver
@@ -243,3 +247,279 @@ def test_destroy_releases_tcl_fonts_and_traces(root, receiver, store):
     window.destroy()
     assert set(root.tk.splitlist(root.tk.call("font", "names"))) == fonts
     assert filter_var.trace_info() == []
+
+
+def card_fill(window, key):
+    return window.canvas.itemcget(window._card_rects[key][0], "fill")
+
+
+def test_read_values_shows_what_changed_since_the_last_click(root, receiver, store):
+    receiver.register(3, "0000100003")  # Event driven, but the receiver holds no value for it yet
+    window = open_window(root, receiver, store)
+    wait_for(root, lambda: not window._reading)  # a scan reads the starting values
+    tx1, tx2, tx3 = window.transmitters
+    assert window._value_text(tx1) == ("1.000 mm", setup_window.TEXT)
+    assert window._value_text(tx2) is None  # Button driven: the receiver keeps no value
+    assert window._value_text(tx3) == ("No data yet", setup_window.AMBER)
+    assert window.live_var.get().startswith("Values read at")
+    assert window.link("0000100001", "a1")
+
+    receiver.transmitters[1].value = Decimal("1.250")
+    receiver.transmitters[3].value = Decimal("3.000")
+    window.read_values()
+    assert str(window.read_button["text"]) == "Reading..."
+    wait_for(root, lambda: not window._reading)
+    assert window._moved == {"0000100001", "0000100003"}
+    assert window.live_var.get() == (
+        "Changed since the last read: CH 01 (CAL-001) 1.000 mm → 1.250 mm; CH 03 No data yet → 3.000 mm"
+    )
+    assert window._value_text(tx1) == ("1.250 mm", setup_window.BLUE)
+    assert card_fill(window, TX1) == card_fill(window, ("asset", "a1")) == setup_window.MOVED_FILL
+    assert card_fill(window, TX2) == card_fill(window, ("asset", "a2")) == setup_window.CARD_FILL
+
+    requests = len(receiver.requests)
+    time.sleep(0.2)
+    root.update()
+    assert len(receiver.requests) == requests  # values are read only when asked
+    window.read_values()
+    wait_for(root, lambda: not window._reading)
+    assert window._moved == set() and card_fill(window, TX1) == setup_window.CARD_FILL
+    assert window.live_var.get().startswith("No values changed since the last read")
+    assert {request.channel for request in receiver.requests if isinstance(request, DataRequest)} == {1, 3}
+    window.destroy()
+
+
+def test_rescan_waits_for_an_in_flight_value_request_and_drops_its_result(root, receiver, store, monkeypatch):
+    window = open_window(root, receiver, store)
+    wait_for(root, lambda: not window._reading)
+    real_read, real_scan = setup_window.read_latest_values, setup_window.scan_receiver
+    started, release, scans = threading.Event(), threading.Event(), []
+    stale = LatestReading(MeasurementPacket(7, 1, Decimal("9.999"), "mm"), datetime.now(timezone.utc))
+
+    def slow_read(*_args, **_kwargs):
+        started.set()
+        assert release.wait(5), "test did not release the value request"
+        return {"0000100001": stale}
+
+    def recorded_scan(*args):
+        scans.append(args)
+        return real_scan(*args)
+
+    monkeypatch.setattr(setup_window, "read_latest_values", slow_read)
+    monkeypatch.setattr(setup_window, "scan_receiver", recorded_scan)
+    window.read_values()
+    assert started.wait(2)
+    monkeypatch.setattr(setup_window, "read_latest_values", real_read)
+    try:
+        window.scan()
+        time.sleep(0.2)
+        root.update()
+        assert window.scanning and not scans  # the port is still in use by the value request
+    finally:
+        release.set()
+    wait_for(root, lambda: not window.scanning and not window._reading and window.readings)
+    assert len(scans) == 1
+    assert window.readings["0000100001"].packet.value == Decimal("1.000")
+    window.destroy()
+
+
+def identify_thread():
+    return next((thread for thread in threading.enumerate() if thread.name == "uwave-identify"), None)
+
+
+def test_identify_links_the_selected_asset_to_the_instrument_whose_reading_changes(root, receiver, store):
+    window = open_window(root, receiver, store, identify_interval=0.02)
+    wait_for(root, lambda: not window._reading)
+    assert str(window.identify_button["state"]) == "disabled"
+    click(window, point(window, ("asset", "a2")))
+    window.identify()
+    wait_for(root, lambda: window._identify.deadline is not None)
+    assert window.identify_bar.grid_info() and not window.skip_button.winfo_manager()
+    assert window.identify_var.get().startswith(
+        "Identify MIC-002: change its instrument's reading, or press its DATA button. Leave the other"
+    )
+    worker = identify_thread()
+
+    receiver.transmitters[1].value = Decimal("1.005")
+    wait_for(root, lambda: window._identify is None)
+    assert window.settings.links == {"a2": Link("a2", "MIC-002", "0000100001", 1, 7)}
+    assert window.live_var.get() == "Linked MIC-002 to CH 01. Click Save to keep it."
+    assert window._moved == {"0000100001"} and not window.identify_bar.grid_info()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    window.destroy()
+
+
+def test_link_all_identifies_each_unlinked_asset_in_turn(root, receiver, store):
+    window = open_window(root, receiver, store, identify_interval=0.02)
+    wait_for(root, lambda: not window._reading)
+    window.link_all()
+    wait_for(root, lambda: window._identify.deadline is not None)
+    assert window.identify_var.get().startswith("Identify CAL-001 (1 of 2):")
+    assert window.skip_button.winfo_manager() == "pack"
+    assert window._selected is None and window._card_rects[("asset", "a1")][1:] == (setup_window.BLUE, 3)
+
+    receiver.press_data(2)
+    wait_for(root, lambda: window._identify.index == 1)
+    assert window.live_var.get() == "Linked CAL-001 to CH 02."
+    assert window._value_text(window.transmitters[1]) == ("2.000 mm", setup_window.BLUE)
+
+    wait_for(root, lambda: window._identify.deadline is not None)  # MIC-002's starting values are in
+    assert window.identify_var.get().startswith("Identify MIC-002 (2 of 2): change")
+    receiver.transmitters[1].value = Decimal("0.995")
+    wait_for(root, lambda: window._identify is None)
+    assert window.settings.links == {
+        "a1": Link("a1", "CAL-001", "0000100002", 2, 7), "a2": Link("a2", "MIC-002", "0000100001", 1, 7),
+    }
+    assert window.live_var.get() == (
+        "Link All finished. Linked CAL-001 to CH 02 and MIC-002 to CH 01. Click Save to keep them."
+    )
+    assert str(window.link_all_button["state"]) == "disabled"  # nothing left to link
+    window.destroy()
+
+
+def reading(channel, value):
+    return LatestReading(MeasurementPacket(7, channel, Decimal(value), "mm"), datetime.now(timezone.utc))
+
+
+def put_round(session, values, *presses):
+    session.results.put((time.perf_counter(), values, list(presses)))
+
+
+def test_identify_links_nothing_while_the_answer_is_ambiguous(root, receiver, store, monkeypatch):
+    monkeypatch.setattr(setup_window, "watch_for_responses", lambda *args: None)  # the test supplies the rounds
+    receiver.register(3, "0000100003", "3.000")
+    window = open_window(root, receiver, store)
+    wait_for(root, lambda: not window._reading)
+    window.link("0000100003", "a1")
+    click(window, point(window, ("asset", "a2")))
+    window.identify()
+    session = window._identify
+
+    def round_(tx1, tx3, *presses):
+        put_round(session, {"0000100001": reading(1, tx1), "0000100003": reading(3, tx3)}, *presses)
+        wait_for(root, session.results.empty)
+
+    round_("1.000", "3.000", ("0000100002", reading(2, "2.000")))  # pressed before Identify started
+    assert window.settings.links.keys() == {"a1"} and window._identify is session
+    round_("1.005", "3.005")
+    assert window.live_var.get().startswith("CH 01 and CH 03 (CAL-001) responded at once.")
+    round_("1.005", "3.010")
+    assert window.live_var.get().startswith("CH 03 responded, but it is already linked to CAL-001.")
+    assert window.settings.links.keys() == {"a1"} and window._identify is session
+    round_("1.005", "3.010", ("0000100002", reading(2, "2.000")))
+    assert window._identify is None
+    assert window.settings.links["a2"].device_id == "0000100002"
+    window.destroy()
+
+
+def test_identify_gives_up_and_link_all_skips_when_nothing_responds(root, receiver, store, monkeypatch):
+    monkeypatch.setattr(setup_window, "watch_for_responses", lambda *args: None)
+    window = open_window(root, receiver, store, identify_seconds=0.1)
+    wait_for(root, lambda: not window._reading)
+    click(window, point(window, ("asset", "a1")))
+    window.identify()
+    put_round(window._identify, {"0000100001": reading(1, "1.000")})
+    wait_for(root, lambda: window._identify is None)
+    assert window.live_var.get().startswith("Nothing responded within 0.1 s.")
+
+    window.link_all()
+    put_round(window._identify, {"0000100001": reading(1, "1.000")})
+    wait_for(root, lambda: window._identify is not None and window._identify.index == 1)
+    put_round(window._identify, {"0000100001": reading(1, "1.000")})
+    wait_for(root, lambda: window._identify is None)
+    assert window.live_var.get() == "Link All finished. Skipped CAL-001 and MIC-002. Nothing was linked."
+    assert window.settings.links == {}
+    window.destroy()
+
+
+def test_answers_queued_before_an_asset_was_asked_for_link_nothing(root, receiver, store, monkeypatch):
+    monkeypatch.setattr(setup_window, "watch_for_responses", lambda *args: None)
+    window = open_window(root, receiver, store)
+    wait_for(root, lambda: not window._reading)
+    window.link_all()
+    session = window._identify
+    put_round(session, {"0000100001": reading(1, "1.000")})
+    wait_for(root, lambda: session.deadline is not None)
+
+    # Both rounds wait in the queue, as during a drag: only the first answers CAL-001's prompt.
+    put_round(session, {"0000100001": reading(1, "1.005")})
+    put_round(session, {"0000100001": reading(1, "1.005")}, ("0000100002", reading(2, "2.000")))
+    wait_for(root, session.results.empty)
+    assert window.settings.links.keys() == {"a1"} and session.target == "a2" and session.deadline is None
+    assert window.identify_var.get() == "Identify MIC-002 (2 of 2): reading the current values…"
+    assert session.wake.is_set()  # the worker starts a fresh round for MIC-002 at once
+
+    put_round(session, {"0000100001": reading(1, "1.005")}, ("0000100002", reading(2, "2.000")))
+    wait_for(root, lambda: session.deadline is not None)
+    assert window.settings.links.keys() == {"a1"}  # pressed before MIC-002's prompt asked for it
+    put_round(session, {"0000100001": reading(1, "1.005")}, ("0000100002", reading(2, "2.000")))
+    wait_for(root, lambda: window._identify is None)
+    assert window.settings.links["a2"].device_id == "0000100002"
+    window.destroy()
+
+
+def test_skipping_or_linking_by_hand_drops_answers_already_queued(root, receiver, store, monkeypatch):
+    monkeypatch.setattr(setup_window, "watch_for_responses", lambda *args: None)
+    window = open_window(root, receiver, store)
+    wait_for(root, lambda: not window._reading)
+    window.link_all()
+    session = window._identify
+    press = ("0000100002", reading(2, "2.000"))
+    put_round(session, {"0000100001": reading(1, "1.000")}, press)
+    window.skip_identify()  # before the starting values were in
+    wait_for(root, session.results.empty)
+    assert session.target == "a2" and session.deadline is None and not window.settings.links
+    put_round(session, {"0000100001": reading(1, "1.000")}, press)
+    wait_for(root, lambda: session.deadline is not None)
+    assert not window.settings.links
+
+    put_round(session, {"0000100001": reading(1, "1.000")}, press)
+    window.link("0000100001", "a2")
+    wait_for(root, lambda: window._identify is None)
+    assert window.settings.links["a2"].device_id == "0000100001"
+    assert window.live_var.get() == (
+        "Link All finished. MIC-002 was linked by hand. Skipped CAL-001. Click Save to keep it."
+    )
+    window.destroy()
+
+
+def test_identification_rounds_include_a_press_that_arrives_with_a_value_reply(receiver):
+    class PressAfterFirstReply:
+        pressed = False
+
+        def write(self, data):
+            receiver.write(data)
+            if not self.pressed:
+                self.pressed = True
+                receiver.press_data(2)
+
+        def read(self, timeout):
+            return receiver.read(timeout)
+
+    results, stop = queue.Queue(), threading.Event()
+    worker = threading.Thread(target=setup_window.watch_for_responses, args=(
+        lambda _port: PressAfterFirstReply(), "SIM", 7, {"0000100001": 1}, {2: "0000100002"}, results, stop,
+        threading.Event(), 0.02,
+    ))
+    worker.start()
+    try:
+        _asked, values, presses = results.get(timeout=5)
+    finally:
+        stop.set()
+        worker.join(timeout=5)
+    assert values["0000100001"].packet.value == Decimal("1.000")
+    assert [device_id for device_id, _ in presses] == ["0000100002"]
+
+
+def test_closing_during_identify_stops_the_worker_and_frees_the_port(root, receiver, store):
+    window = open_window(root, receiver, store, identify_interval=0.02)
+    wait_for(root, lambda: not window._reading)
+    window.link_all()
+    wait_for(root, lambda: window._identify.deadline is not None)
+    worker = identify_thread()
+    window.destroy()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert setup_window._PORT_LOCK.acquire(timeout=1)
+    setup_window._PORT_LOCK.release()

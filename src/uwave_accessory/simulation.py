@@ -1,9 +1,11 @@
 """Deterministic in-memory U-WAVE-R for tests and development without hardware.
 
 Speaks the wire format for specific-channel DR requests and IR requests and
-answers with DT, ST, TI or RI as documented. It does not model radio timing,
-button-driven output, editing states or all-channel DR searches. IR searches
-include their starting channel, an assumption still to be confirmed on
+answers with DT, ST, TI or RI as documented. press_data models the documented
+Button driven DATA press, which the receiver forwards to the PC as DT; that the
+virtual COM route delivers it this way is still to be confirmed on hardware. It
+does not model radio timing, editing states or all-channel DR searches. IR
+searches include their starting channel, an assumption still to be confirmed on
 hardware. Extend it only with behavior confirmed against the manual or hardware.
 """
 
@@ -11,6 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+import threading
+import time
 
 from .protocol import (
     BAND_IDS, DataRequest, Destination, InfoRequest, MeasurementMode, MeasurementPacket, PacketFramer,
@@ -41,7 +45,10 @@ class SimulatedTransmitter:
 
 
 class SimulatedReceiver:
-    """A Transport whose replies follow the receiver's documented DR and IR behavior."""
+    """A Transport whose replies follow the receiver's documented DR and IR behavior.
+
+    Safe to drive from a GUI thread while a worker thread reads it.
+    """
 
     def __init__(
         self, group: int = 0, *, device_id: str = "0000000001", band_id: int = BAND_IDS[0],
@@ -55,6 +62,7 @@ class SimulatedReceiver:
         self.responding = True
         self.transmitters: dict[int, SimulatedTransmitter] = {}
         self.requests: list[DataRequest | InfoRequest] = []
+        self._lock = threading.Lock()
         self._framer = PacketFramer()
         self._output = bytearray()
         self._held = bytearray()
@@ -72,35 +80,52 @@ class SimulatedReceiver:
 
     def inject(self, data: bytes) -> None:
         """Make raw bytes readable now: stale replies, unsolicited packets or noise."""
-        self._output += data
+        with self._lock:
+            self._output += data
 
     def interleave(self, data: bytes) -> None:
         """Emit raw bytes after the next request arrives, ahead of its reply."""
-        self._interleaved += data
+        with self._lock:
+            self._interleaved += data
 
     def release_held(self) -> None:
         """Deliver replies withheld while not responding, i.e. late replies."""
-        self._output += self._held
-        self._held.clear()
+        with self._lock:
+            self._output += self._held
+            self._held.clear()
+
+    def press_data(self, channel: int) -> None:
+        """Press DATA on a connected Button driven transmitter: the receiver forwards its reading."""
+        transmitter = self.transmitters[channel]
+        if not transmitter.connected or transmitter.mode != MeasurementMode.BUTTON_DRIVEN:
+            raise ValueError(f"channel {channel:02d} is not a connected Button driven transmitter")
+        if transmitter.value is None:
+            raise ValueError(f"channel {channel:02d} has no reading to send")
+        self.inject(MeasurementPacket(self.group, channel, transmitter.value, transmitter.unit).encode())
 
     def write(self, data: bytes) -> None:
-        for raw in self._framer.feed(data):
-            request = InfoRequest.decode(raw) if raw.startswith(b"IR") else DataRequest.decode(raw)
-            self.requests.append(request)
-            self._output += self._interleaved
-            self._interleaved.clear()
-            reply = self._info_reply(request) if isinstance(request, InfoRequest) else self._reply(request)
-            (self._output if self.responding else self._held).extend(reply)
+        with self._lock:
+            for raw in self._framer.feed(data):
+                request = InfoRequest.decode(raw) if raw.startswith(b"IR") else DataRequest.decode(raw)
+                self.requests.append(request)
+                self._output += self._interleaved
+                self._interleaved.clear()
+                reply = self._info_reply(request) if isinstance(request, InfoRequest) else self._reply(request)
+                (self._output if self.responding else self._held).extend(reply)
 
     def read(self, timeout: float) -> bytes:
-        if not self._output:
-            if self.clock is not None and timeout > 0:
+        with self._lock:
+            if self._output:
+                size = self.chunk_size or len(self._output)
+                data = bytes(self._output[:size])
+                del self._output[:size]
+                return data
+        if self.clock is not None:
+            if timeout > 0:
                 self.clock.advance(timeout)
-            return b""
-        size = self.chunk_size or len(self._output)
-        data = bytes(self._output[:size])
-        del self._output[:size]
-        return data
+        elif timeout > 0:
+            time.sleep(min(timeout, 0.01))  # a real port blocks; returning at once would spin a listener
+        return b""
 
     def _reply(self, request: DataRequest) -> bytes:
         if request.channel is None or request.search != Search.SPECIFIC:

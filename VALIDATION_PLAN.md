@@ -63,10 +63,10 @@ not needed by the initial integration.
 | Area | Evidence and limits |
 | --- | --- |
 | [Packet codec](tests/test_protocol.py) | Literal DT/ST/TI/RI fixtures, DR/IR field ordering, malformed/unit rejection, fragmented and concatenated stream reads |
-| [Receiver client](tests/test_receiver.py) | Requested-channel routing, ST failures, TI changes, discovery, wrong-group errors and timeouts; late data drained before the next request |
+| [Receiver client](tests/test_receiver.py) | Requested-channel routing, ST failures, TI changes, discovery, wrong-group errors and timeouts; late data drained before the next request; unsolicited packets passed to a listener, malformed ones skipped |
 | [Serial transport](tests/test_serial_transport.py) | Synthetic loopback reads/timeouts, unavailable-port errors and port ordering; no vendor driver exercised |
 | [Links](tests/test_links.py) | One-to-one mapping, Device ID rather than channel identity, scan states, persisted settings and invalid-file rejection |
-| [Setup GUI](tests/test_setup_window.py) | Left/right asset layout, deduplication, optional balloon labels, drag/click linking, unlinking, missing-source cards, save/discard, failed rescans and closing while scanning |
+| [Setup GUI](tests/test_setup_window.py) | Left/right asset layout, deduplication, optional balloon labels, drag/click linking, unlinking, missing-source cards, save/discard, failed rescans and closing while scanning; Read Values change reporting; Identify and Link All by simulated reading change or DATA press, ambiguous or linked-elsewhere responders, answers queued before an asset was asked for, Skip, hand links, timeouts and closing mid-identify |
 
 Still open: replies arriving after a new request begins, physical sample age,
 real connection/reconnection guarantees, host capture cancellation/pedal flow,
@@ -101,6 +101,13 @@ The simulator assumes inclusive IR searches; it cannot prove that behavior.
   test a disconnected port, an occupied port and a device changing state mid-scan.
 - Check that cancelling/closing setup releases its port after the scan exits
   and that failed rescans never leave earlier availability marked ready.
+- Read Values: compare displayed values and units with the instruments; time the
+  DR requests with several Event driven transmitters connected.
+- Identify/Link All: confirm the receiver forwards a Button driven DATA press to
+  the PC over the VCP as a DT packet, and whether a DATA press in Event driven mode
+  sends anything. Check noisy or drifting instruments (no change threshold is
+  applied) and that the port, held for the whole session, is released on Stop
+  and on closing the window.
 - Do not use the low-level client's buffer drain as proof of late-response
   isolation. Establish and test a safe correlation/recovery strategy before
   connecting captures to real inspection records.

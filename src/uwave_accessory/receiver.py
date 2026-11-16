@@ -83,6 +83,13 @@ def _utc_now() -> datetime:
 
 
 class ReceiverClient:
+    """Requests to one receiver group.
+
+    Packets that are not the reply to a request go to on_unsolicited: DATA presses
+    the receiver forwards from Button driven transmitters, state changes, other
+    channels' packets and late replies. Without it they are logged and dropped.
+    """
+
     def __init__(
         self,
         transport: Transport,
@@ -90,11 +97,13 @@ class ReceiverClient:
         *,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = _utc_now,
+        on_unsolicited: Callable[[Packet, datetime], None] | None = None,
     ):
         self.group = group
         self._transport = transport
         self._clock = clock
         self._now = now
+        self._on_unsolicited = on_unsolicited
         self._framer = PacketFramer()
         self._unread: deque[tuple[bytes, datetime]] = deque()
 
@@ -174,6 +183,43 @@ class ReceiverClient:
             start = result.channel + 1
         return found
 
+    def listen(self, duration: float) -> None:
+        """Receive for duration seconds without a request, passing every packet to on_unsolicited.
+
+        listen(0) passes on whatever has already arrived. Malformed packets are
+        logged and skipped: there is no request for them to fail.
+        """
+        if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not (
+            math.isfinite(duration) and duration >= 0
+        ):
+            raise ValueError("duration must be a non-negative number of seconds")
+        deadline = self._clock() + duration
+        drained = 0
+        while True:
+            remaining = max(deadline - self._clock(), 0.0)
+            data = self._transport.read(remaining)
+            self._receive(data)
+            while self._unread:
+                self._pass_on_raw(*self._unread.popleft())
+            if remaining <= 0:
+                drained += len(data)
+                if not data or drained > _STALE_OUTPUT_LIMIT:  # a continuously sending device must not hold it
+                    return
+
+    def _pass_on(self, packet: Packet, received_at: datetime) -> None:
+        if self._on_unsolicited is None:
+            logger.info("Ignored U-WAVE-R packet: %r", packet)
+        else:
+            self._on_unsolicited(packet, received_at)
+
+    def _pass_on_raw(self, raw: bytes, received_at: datetime) -> None:
+        try:
+            packet = parse_packet(raw)
+        except PacketError as error:
+            logger.warning("Skipped malformed U-WAVE-R output %r: %s", raw, error)
+        else:
+            self._pass_on(packet, received_at)
+
     def _raise_request_error(self, packet: Packet, request: InfoRequest) -> None:
         if (
             isinstance(packet, StatusPacket) and packet.code == StatusCode.REQUEST_ERROR
@@ -207,7 +253,7 @@ class ReceiverClient:
                 result = accept(packet, received_at)
                 if result is not None:
                     return result
-                logger.info("Ignored U-WAVE-R packet while waiting for a reply: %r", raw)
+                self._pass_on(packet, received_at)
             remaining = deadline - self._clock()
             if remaining <= 0:
                 raise ResponseTimeout(f"{label}: no reply within {timeout:g} seconds.")
@@ -218,11 +264,12 @@ class ReceiverClient:
         self._unread.extend((raw, received_at) for raw in self._framer.feed(data))
 
     def _discard_stale_output(self) -> None:
-        """Drop late replies, unsolicited packets and partial bytes before a new request.
+        """Pass on late replies and unsolicited packets, and drop partial bytes, before a new request.
 
-        The legacy protocol has no request ID. A late reply that arrives after this
-        drain but before the new reply is indistinguishable from it; response latency
-        and any settle policy must be established on hardware.
+        None of them can answer the new request. The legacy protocol has no request ID.
+        A late reply that arrives after this drain but before the new reply is
+        indistinguishable from it; response latency and any settle policy must be
+        established on hardware.
         """
         discarded = 0
         while data := self._transport.read(0):
@@ -230,9 +277,8 @@ class ReceiverClient:
             if discarded > _STALE_OUTPUT_LIMIT:
                 raise ReceiverError("Receiver output did not go quiet; check for a continuously sending device.")
             self._receive(data)
-        for raw, _ in self._unread:
-            logger.info("Discarded stale U-WAVE-R output: %r", raw)
-        self._unread.clear()
+        while self._unread:
+            self._pass_on_raw(*self._unread.popleft())
         partial = self._framer.reset()
         if partial:
             logger.info("Discarded partial U-WAVE-R packet: %r", partial)

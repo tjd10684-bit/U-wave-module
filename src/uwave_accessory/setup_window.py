@@ -5,6 +5,14 @@ the host passes in are listed on the right. Drag one onto the other, or click
 one and then the other, to link them. Select a link and press Delete (or
 Unlink) to remove it. Links are saved per PC by links.ConfigStore.
 
+To tell identical instruments apart, Read Values shows each transmitter's
+latest value once per click and highlights the ones that changed since the last
+click. Identify (for the selected asset) and Link All (for every unlinked asset
+in turn) automate it: the operator changes the asked-for instrument's reading,
+or presses its DATA button, and the one transmitter that responds is linked.
+Values come from the receiver's memory, so reading them does not wake the
+transmitters.
+
 configure(parent, equipment) matches the host contract's configure callback.
 Try it without hardware: python -m uwave_accessory.setup_window --demo
 """
@@ -12,34 +20,60 @@ Try it without hardware: python -m uwave_accessory.setup_window --demo
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Decimal
 import logging
+import math
 from pathlib import Path
 import queue
 import tempfile
 import threading
+import time
 import tkinter as tk
 from tkinter import font as tkfont, messagebox, ttk
 from typing import Callable, Iterable, Protocol
 
 from .links import AccessoryConfig, ConfigError, ConfigStore, LinkState, check_link
-from .protocol import MeasurementMode, ReceiverInfo, TransmitterInfo, TransmitterState
-from .receiver import ReceiverClient, ReceiverError, Transport, find_receiver
+from .protocol import (
+    MeasurementMode, MeasurementPacket, Packet, ReceiverInfo, StatusCode, TransmitterInfo, TransmitterState,
+)
+from .receiver import (
+    LatestReading, ReceiverClient, ReceiverError, ResponseTimeout, StatusReported, TransmitterChanged, Transport,
+    find_receiver,
+)
 from .serial_transport import PortInfo, SerialTransport, TransportError, list_ports
 
 logger = logging.getLogger(__name__)
 
 TITLE = "Measurement Devices"
 REQUEST_TIMEOUT = 1.0
+IDENTIFY_SECONDS = 30  # how long Identify waits for the operator before giving up on an asset
+IDENTIFY_INTERVAL = 1.0  # seconds between value requests while identifying
 DEMO_PORT = "Simulator"
 
 CARD_HEIGHT, CARD_GAP, MARGIN, HEADER, MIN_CANVAS_WIDTH = 64, 12, 24, 44, 720
 GREEN, AMBER, RED, GRAY, BLUE = "#2e7d32", "#e65100", "#c62828", "#757575", "#1565c0"
-CANVAS_BG, CARD_FILL, GHOST_FILL, CARD_OUTLINE, TEXT, MUTED = (
-    "#f4f6f8", "#ffffff", "#eceff1", "#b0bec5", "#212121", "#546e7a",
+CANVAS_BG, CARD_FILL, GHOST_FILL, MOVED_FILL, CARD_OUTLINE, TEXT, MUTED, PROMPT_BG = (
+    "#f4f6f8", "#ffffff", "#eceff1", "#fff3c4", "#b0bec5", "#212121", "#546e7a", "#e3f2fd",
 )
+
+# Windows opens a COM port exclusively, so scans, value reads and identification,
+# including those of a window that is closing, take turns.
+_PORT_LOCK = threading.Lock()
+_NO_DATA = "no data"
+_LISTEN_SLICE = 0.05  # seconds; how quickly identification notices a new target or a stop
+
+_READING_PROBLEMS = {
+    StatusCode.LOW_BATTERY: "Low battery",
+    StatusCode.INSTRUMENT_NOT_RESPONDING: "Gauge not responding",
+    StatusCode.TRANSMITTER_DISCONNECTED: "Not connected",
+    StatusCode.NO_DATA: "No data yet",
+    StatusCode.REQUEST_ERROR: "Request rejected",
+}
 DEFAULT_HINT = (
     "Drag a transmitter onto an asset, or click one and then the other, to link them. "
+    "Not sure which instrument is which? Click Link All and change each reading when asked. "
     "Select a link and press Delete to remove it."
 )
 
@@ -91,9 +125,129 @@ def scan_receiver(
             receiver = ReceiverClient(transport, group).receiver_info(timeout)
         return ScanResult(receiver, ReceiverClient(transport, receiver.group).list_transmitters(timeout))
     finally:
-        close = getattr(transport, "close", None)
-        if close is not None:
-            close()
+        _close(transport)
+
+
+def read_latest_values(
+    open_transport: Callable[[str], Transport], port: str, group: int, channels: dict[str, int],
+    timeout: float = REQUEST_TIMEOUT, cancel: threading.Event | None = None,
+) -> dict[str, LatestReading | ReceiverError]:
+    """Open the port, request each transmitter's latest stored value, close.
+
+    channels maps transmitter Device ID to channel. A failed request is returned in
+    place of its reading so one silent transmitter does not hide the others. Values
+    stay in the receiver. Stops early, omitting the rest, once cancel is set.
+    """
+    transport = open_transport(port)
+    try:
+        client = ReceiverClient(transport, group)
+        results: dict[str, LatestReading | ReceiverError] = {}
+        for device_id, channel in channels.items():
+            if cancel is not None and cancel.is_set():
+                break
+            try:
+                results[device_id] = client.request_latest(channel, timeout)
+            except ReceiverError as error:
+                results[device_id] = error
+        return results
+    finally:
+        _close(transport)
+
+
+def _close(transport: Transport) -> None:
+    close = getattr(transport, "close", None)
+    if close is not None:
+        close()
+
+
+def watch_for_responses(
+    open_transport: Callable[[str], Transport], port: str, group: int, event_channels: dict[str, int],
+    button_channels: dict[int, str], results: queue.Queue, stop: threading.Event, wake: threading.Event,
+    interval: float, timeout: float = REQUEST_TIMEOUT,
+) -> None:
+    """Hold the port and report, every interval, values and DATA presses until stop is set.
+
+    event_channels maps Device ID to channel for Event driven transmitters, whose
+    latest values are requested each round; button_channels maps channel to Device ID
+    for Button driven transmitters, whose DATA presses the receiver forwards. Each
+    round puts (asked, values by Device ID, [(Device ID, reading) per press]) on
+    results, where asked is the time.perf_counter() at which its values were requested.
+    Setting wake ends the current round early. A failure that ends the watch is put
+    on results instead.
+    """
+    presses: list[tuple[str, LatestReading]] = []
+
+    def collect(packet: Packet, received_at: datetime) -> None:
+        # Only Button driven channels are never requested, so a late request reply cannot pass for a press.
+        if isinstance(packet, MeasurementPacket) and packet.group == group and packet.channel in button_channels:
+            presses.append((button_channels[packet.channel], LatestReading(packet, received_at)))
+
+    try:
+        with _PORT_LOCK:
+            if stop.is_set():
+                return
+            transport = open_transport(port)
+            try:
+                client = ReceiverClient(transport, group, on_unsolicited=collect)
+                wait = 0.0
+                while not stop.is_set():
+                    end = time.monotonic() + wait
+                    while True:  # in slices, so that a new target or a stop is noticed at once
+                        client.listen(min(max(end - time.monotonic(), 0.0), _LISTEN_SLICE))
+                        if stop.is_set():
+                            return
+                        if wake.is_set() or time.monotonic() >= end:
+                            break
+                    wake.clear()
+                    asked = time.perf_counter()
+                    values: dict[str, LatestReading | ReceiverError] = {}
+                    for device_id, channel in event_channels.items():
+                        if stop.is_set():
+                            return
+                        try:
+                            values[device_id] = client.request_latest(channel, timeout)
+                        except TransportError:
+                            raise
+                        except ReceiverError as error:
+                            values[device_id] = error
+                    client.listen(0)  # a press that arrived with the last reply belongs to this round
+                    results.put((asked, values, presses[:]))
+                    presses.clear()
+                    wait = interval
+            finally:
+                _close(transport)
+    except ReceiverError as error:
+        results.put(error)
+    except Exception as error:  # a worker exception would otherwise leave identification waiting forever
+        logger.exception("U-WAVE identification failed")
+        results.put(error)
+
+
+@dataclass(eq=False)
+class _Identify:
+    """An Identify or Link All run: which assets to identify and how far it has got."""
+
+    targets: list[str]  # asset IDs, in order
+    guided: bool  # Link All: move on to the next asset rather than stop
+    results: queue.Queue
+    stop: threading.Event
+    wake: threading.Event  # set when a new target is asked for, to start a fresh round
+    event_devices: frozenset[str]
+    button_devices: frozenset[str]
+    index: int = 0
+    # Answers count only after values requested since the current target was asked for are in.
+    # perf_counter: time.monotonic() ticks only every 15.6 ms on Windows before Python 3.13.
+    prompted_at: float = field(default_factory=time.perf_counter)
+    deadline: float | None = None  # time.monotonic(); None until those starting values are in
+    target_link: object = None  # the current target's link when it was asked for
+    linked: list[str] = field(default_factory=list)
+    confirmed: list[str] = field(default_factory=list)
+    by_hand: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+
+    @property
+    def target(self) -> str:
+        return self.targets[self.index]
 
 
 def available_ports() -> list[PortInfo]:
@@ -116,21 +270,35 @@ class SetupWindow(tk.Toplevel):
         list_ports: Callable[[], list[PortInfo]] = available_ports,
         default_port: str | None = None,
         title: str = TITLE,
+        identify_seconds: float = IDENTIFY_SECONDS,
+        identify_interval: float = IDENTIFY_INTERVAL,
     ):
         super().__init__(parent)
         self.title(title)
         self.store = store or ConfigStore()
         self.open_transport = open_transport
         self.list_ports = list_ports
+        self.identify_seconds = identify_seconds
+        self.identify_interval = identify_interval
         self.assets = _assets(equipment)
         self.saved = False
         self.dirty = False
         self.scanning = False
         self.transmitters: list[TransmitterInfo] | None = None  # None: not scanned yet
         self.receiver: ReceiverInfo | None = None
+        self.readings: dict[str, LatestReading | ReceiverError] = {}  # latest value request by device ID
+        self.pressed: dict[str, LatestReading] = {}  # latest DATA press by device ID (Button driven)
+        self._known: dict[str, LatestReading | ReceiverError] = {}  # last value or "no data" by device ID
+        self._moved: set[str] = set()  # device IDs that responded in the latest read
         self._results: queue.Queue = queue.Queue()
         self._poll_id: str | None = None
         self._startup_id: str | None = None
+        self._reading = False
+        self._reading_results: queue.Queue | None = None
+        self._reading_poll_id: str | None = None
+        self._reading_cancel: threading.Event | None = None
+        self._identify: _Identify | None = None
+        self._identify_poll_id: str | None = None
         self._selected: tuple[str, str] | None = None
         self._drag: dict | None = None
         self._hit: dict[int, tuple[str, str]] = {}
@@ -154,6 +322,8 @@ class SetupWindow(tk.Toplevel):
         self._bold.configure(weight="bold")
         self._heading = base.copy()
         self._heading.configure(weight="bold", size=size + 1 if size > 0 else size - 1)
+        self._value = base.copy()
+        self._value.configure(weight="bold", size=size + 2 if size > 0 else size - 3)
 
         if parent.winfo_viewable():
             self.transient(parent.winfo_toplevel())
@@ -163,6 +333,7 @@ class SetupWindow(tk.Toplevel):
         self.rowconfigure(1, weight=1)
         self._build_toolbar()
         self._build_canvas()
+        self._build_identify_bar()
         self._build_footer()
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         self.bind("<Escape>", lambda _event: self.cancel())
@@ -196,6 +367,8 @@ class SetupWindow(tk.Toplevel):
         self.group_combo.bind("<<ComboboxSelected>>", self._group_changed)
         self.scan_button = ttk.Button(bar, text="Scan Receiver", command=self.scan)
         self.scan_button.pack(side="left")
+        self.read_button = ttk.Button(bar, text="Read Values", command=self.read_values, state="disabled")
+        self.read_button.pack(side="left", padx=(6, 0))
         self.filter_var = tk.StringVar(self)
         self._filter_trace: str | None = self.filter_var.trace_add("write", lambda *_args: self.redraw())
         ttk.Entry(bar, textvariable=self.filter_var, width=22).pack(side="right")
@@ -220,9 +393,29 @@ class SetupWindow(tk.Toplevel):
         self.canvas.bind("<Configure>", self._on_resize)
         self.canvas.bind("<Delete>", lambda _event: self.unlink_selected())
 
+    def _build_identify_bar(self) -> None:
+        """The prompt shown while identifying; hidden otherwise."""
+        bar = tk.Frame(self, background=PROMPT_BG, padx=12, pady=8, highlightthickness=1,
+                       highlightbackground=BLUE)
+        ttk.Button(bar, text="Stop", command=self.stop_identify).pack(side="right")
+        self.skip_button = ttk.Button(bar, text="Skip", command=self.skip_identify)
+        self.identify_var = tk.StringVar(self)
+        self.identify_label = tk.Label(
+            bar, textvariable=self.identify_var, background=PROMPT_BG, foreground=TEXT, font=self._bold,
+            anchor="w", justify="left",
+        )
+        self.identify_label.pack(side="left", fill="x", expand=True)
+        bar.bind("<Configure>", lambda event: self.identify_label.configure(wraplength=max(event.width - 220, 200)))
+        bar.grid(row=2, column=0, sticky="ew", padx=12, pady=(8, 0))
+        bar.grid_remove()
+        self.identify_bar = bar
+
     def _build_footer(self) -> None:
         info = ttk.Frame(self, padding=(12, 6, 12, 0))
-        info.grid(row=2, column=0, sticky="ew")
+        info.grid(row=3, column=0, sticky="ew")
+        self.live_var = tk.StringVar(self)
+        self.live_label = ttk.Label(info, textvariable=self.live_var, wraplength=940, foreground=BLUE)
+        self.live_label.pack(anchor="w", pady=(0, 2))
         self.hint_var = tk.StringVar(self)
         self.hint_label = ttk.Label(info, textvariable=self.hint_var, wraplength=940)
         self.hint_label.pack(anchor="w")
@@ -230,9 +423,13 @@ class SetupWindow(tk.Toplevel):
         self.status_label = ttk.Label(info, textvariable=self.status_var, wraplength=940, foreground=MUTED)
         self.status_label.pack(anchor="w", pady=(2, 0))
         buttons = ttk.Frame(self, padding=12)
-        buttons.grid(row=3, column=0, sticky="ew")
+        buttons.grid(row=4, column=0, sticky="ew")
         self.unlink_button = ttk.Button(buttons, text="Unlink", command=self.unlink_selected, state="disabled")
         self.unlink_button.pack(side="left")
+        self.identify_button = ttk.Button(buttons, text="Identify", command=self.identify, state="disabled")
+        self.identify_button.pack(side="left", padx=(8, 0))
+        self.link_all_button = ttk.Button(buttons, text="Link All", command=self.link_all, state="disabled")
+        self.link_all_button.pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="Cancel", command=self.cancel).pack(side="right")
         ttk.Button(buttons, text="Save", command=self.save).pack(side="right", padx=8)
 
@@ -281,6 +478,8 @@ class SetupWindow(tk.Toplevel):
         self._startup_id = None
         if self.scanning:
             return
+        self._end_identify("")
+        self._stop_readings()
         port, group = self.settings.port, self.settings.group
         if not port:
             self._set_status("Choose the receiver's COM port, then scan.", error=True)
@@ -301,7 +500,8 @@ class SetupWindow(tk.Toplevel):
         open_transport: Callable[[str], Transport], results: queue.Queue, port: str, group: int | None,
     ) -> None:
         try:
-            result = scan_receiver(open_transport, port, group)
+            with _PORT_LOCK:
+                result = scan_receiver(open_transport, port, group)
         except ReceiverError as error:
             result = error
         except Exception as error:  # a worker exception would otherwise leave the window "Scanning" forever
@@ -323,6 +523,7 @@ class SetupWindow(tk.Toplevel):
             return
         if isinstance(result, Exception):
             self._set_status(f"Scan failed: {result}", error=True)
+            self._update_buttons()
             return
         self.receiver, self.transmitters = result.receiver, result.transmitters
         before = dict(self.settings.links)
@@ -330,6 +531,385 @@ class SetupWindow(tk.Toplevel):
         self.dirty |= self.settings.links != before
         self.redraw()
         self._set_status(self._summary())
+        self.read_values()
+
+    # Values and identification ---------------------------------------------
+
+    def read_values(self) -> None:
+        """Request each Event driven transmitter's latest value once and show which changed since the last read.
+
+        The receiver answers from its memory, so this does not wake the transmitters.
+        """
+        if not self._can_use_receiver():
+            return
+        channels = _event_channels(self.transmitters)
+        if not channels:
+            self._set_live(
+                "No connected transmitter is Event driven, so the receiver keeps no values to read. "
+                "Select an asset and click Identify, then press its DATA button.",
+            )
+            return
+        self._reading = True
+        self._reading_cancel = cancel = threading.Event()
+        self._reading_results = results = queue.Queue()
+        threading.Thread(
+            target=self._reading_worker,
+            args=(self.open_transport, results, self.settings.port, self.receiver.group, channels, cancel),
+            name="uwave-readings", daemon=True,
+        ).start()
+        self._reading_poll_id = self.after(50, self._poll_readings)
+        self._update_buttons()
+
+    @staticmethod
+    def _reading_worker(
+        open_transport: Callable[[str], Transport], results: queue.Queue, port: str, group: int,
+        channels: dict[str, int], cancel: threading.Event,
+    ) -> None:
+        try:
+            with _PORT_LOCK:
+                result = {} if cancel.is_set() else read_latest_values(
+                    open_transport, port, group, channels, cancel=cancel,
+                )
+        except ReceiverError as error:
+            result = error
+        except Exception as error:  # a worker exception would otherwise leave the window "Reading" forever
+            logger.exception("U-WAVE value request failed")
+            result = error
+        results.put(result)
+
+    def _poll_readings(self) -> None:
+        if self._drag is not None:  # a redraw now would erase the drag line
+            self._reading_poll_id = self.after(50, self._poll_readings)
+            return
+        try:
+            result = self._reading_results.get_nowait()
+        except queue.Empty:
+            self._reading_poll_id = self.after(50, self._poll_readings)
+            return
+        self._reading_poll_id = None
+        self._reading = False
+        self._reading_cancel = self._reading_results = None
+        if isinstance(result, Exception):
+            self._moved = set()
+            self._set_live(f"Reading values failed: {result}", error=True)
+            self.redraw()
+            return
+        first = not self._known
+        changed = self._take_values(result)
+        self._moved = set(changed)
+        if changed:
+            self._set_live("Changed since the last read: " + self._changes_text(changed))
+        elif first:
+            self._set_live(
+                f"Values read at {datetime.now():%H:%M:%S}. Change an instrument's reading, then click "
+                "Read Values again to see which transmitter it is, or select an asset and click Identify.",
+            )
+        else:
+            self._set_live(f"No values changed since the last read ({datetime.now():%H:%M:%S}).")
+        self.redraw()
+
+    def _take_values(self, values: dict[str, LatestReading | ReceiverError]) -> dict[str, object]:
+        """Store requested values; return the previous value of each transmitter whose value changed.
+
+        A failed request keeps the transmitter's last known value to compare the next one
+        with. "No data yet" followed by a value is a change.
+        """
+        self.readings.update(values)
+        changed = {}
+        for device_id, result in values.items():
+            key = _value_key(result)
+            if key is None:
+                continue
+            before = self._known.get(device_id)
+            if isinstance(result, LatestReading) and before is not None and _value_key(before) != key:
+                changed[device_id] = before
+            self._known[device_id] = result
+        return changed
+
+    def _changes_text(self, changed: dict[str, object]) -> str:
+        return "; ".join(
+            f"{self._channel_label(info.device_id)} {_result_text(changed[info.device_id])} → "
+            f"{_result_text(self.readings[info.device_id])}"
+            for info in self.transmitters or () if info.device_id in changed
+        )
+
+    def _stop_readings(self) -> None:
+        if self._reading_poll_id is not None:
+            self.after_cancel(self._reading_poll_id)
+            self._reading_poll_id = None
+        if self._reading_cancel is not None:
+            self._reading_cancel.set()
+        # The worker's result goes to the abandoned queue; the next scan waits for it to release the port.
+        self._reading = False
+        self._reading_cancel = self._reading_results = None
+        self.readings, self.pressed, self._known, self._moved = {}, {}, {}, set()
+        self._set_live("")
+
+    def identify(self) -> None:
+        """Link the selected asset to the transmitter whose reading changes or whose DATA button is pressed."""
+        asset_id = self._selected_asset()
+        if asset_id is None:
+            self._set_hint("Select an asset first, then click Identify.", warning=True)
+            return
+        self._start_identify([asset_id], guided=False)
+
+    def link_all(self) -> None:
+        """Identify each listed asset without a link in turn."""
+        targets = [asset.asset_id for asset in self._visible_assets() if asset.asset_id not in self.settings.links]
+        if not targets:
+            self._set_live("Every listed asset is already linked.")
+            return
+        self._start_identify(targets, guided=True)
+
+    def _start_identify(self, targets: list[str], *, guided: bool) -> None:
+        if not self._can_use_receiver():
+            return
+        event_channels = _event_channels(self.transmitters)
+        button_channels = {
+            info.channel: info.device_id for info in self.transmitters
+            if info.state == TransmitterState.CONNECTED and info.mode == MeasurementMode.BUTTON_DRIVEN
+            and info.channel is not None
+        }
+        if not event_channels and not button_channels:
+            self._set_live("Identify needs a connected transmitter. Turn the transmitters on, then scan.", error=True)
+            return
+        session = _Identify(
+            targets, guided, queue.Queue(), threading.Event(), threading.Event(), frozenset(event_channels),
+            frozenset(button_channels.values()), target_link=self.settings.links.get(targets[0]),
+        )
+        self._identify = session
+        self._moved = set()
+        threading.Thread(
+            target=watch_for_responses,
+            args=(
+                self.open_transport, self.settings.port, self.receiver.group, event_channels, button_channels,
+                session.results, session.stop, session.wake, self.identify_interval,
+            ),
+            name="uwave-identify", daemon=True,
+        ).start()
+        self._identify_poll_id = self.after(50, self._poll_identify)
+        if guided:
+            self.skip_button.pack(side="right", padx=(0, 8), before=self.identify_label)
+        else:
+            self.skip_button.pack_forget()
+        self.identify_bar.grid()
+        self._set_live("")
+        self._prompt(session)
+        self.redraw()
+
+    def stop_identify(self) -> None:
+        session = self._identify
+        if session is not None:
+            self._end_identify(self._identify_summary(session, "Stopped."))
+
+    def skip_identify(self) -> None:
+        session = self._identify
+        if session is not None:
+            session.skipped.append(self._asset_tag(session.target))
+            self._next_target(session)
+
+    def _poll_identify(self) -> None:
+        session = self._identify
+        self._identify_poll_id = None
+        if session is None:
+            return
+        if self._drag is None:  # a link or redraw now would erase the drag line
+            self._check_linked_by_hand(session)
+            while session is self._identify:
+                try:
+                    message = session.results.get_nowait()
+                except queue.Empty:
+                    break
+                if isinstance(message, Exception):
+                    self._end_identify(f"Identify stopped: {message}", error=True)
+                    return
+                self._identify_round(session, *message)
+            if session is self._identify:
+                self._check_deadline(session)
+        if session is self._identify:
+            self._identify_poll_id = self.after(50, self._poll_identify)
+
+    def _check_linked_by_hand(self, session: _Identify) -> None:
+        current = self.settings.links.get(session.target)
+        if current == session.target_link:
+            return
+        session.target_link = current
+        if current is not None:
+            tag = self._asset_tag(session.target)
+            session.by_hand.append(tag)
+            self._set_live(f"{tag} was linked by hand.")
+            self._next_target(session)
+
+    def _identify_round(
+        self, session: _Identify, asked: float, values: dict[str, LatestReading | ReceiverError],
+        presses: list[tuple[str, LatestReading]],
+    ) -> None:
+        changed = self._take_values(values)
+        if session.deadline is None:
+            # The operator has not been asked to act yet, so these presses are not answers.
+            if asked > session.prompted_at:  # starting values for the current target
+                session.deadline = time.monotonic() + self.identify_seconds
+                self._prompt(session)
+            self.redraw()
+            return
+        for device_id, reading in presses:
+            self.pressed[device_id] = reading
+        responders = set(changed) | {device_id for device_id, _ in presses}
+        if not responders:
+            if values or presses:
+                self.redraw()
+            return
+        self._moved = responders
+        tag = self._asset_tag(session.target)
+        if len(responders) > 1:
+            labels = [self._channel_label(info.device_id) for info in self.transmitters if info.device_id in responders]
+            self._retry(
+                session, f"{_join(labels)} responded at once. Leave the other instruments alone and change only "
+                f"{tag}'s reading.",
+            )
+            return
+        device_id = next(iter(responders))
+        current = self.settings.link_for_device(device_id)
+        channel = self._channel_label(device_id, linked=False)
+        if current is not None and current.asset_id != session.target:
+            self._retry(
+                session, f"{channel} responded, but it is already linked to {current.asset_label}. "
+                f"Change {tag}'s reading instead, or unlink {current.asset_label} first.",
+            )
+            return
+        if current is not None:
+            session.confirmed.append(f"{tag} on {channel}")
+            self._select(("link", session.target))
+            message = f"{tag} is on {channel}, as linked."
+        else:
+            self.link(device_id, session.target)
+            session.linked.append(f"{tag} to {channel}")
+            message = f"Linked {tag} to {channel}."
+        self._set_live(message)
+        self._next_target(session)
+
+    def _retry(self, session: _Identify, message: str) -> None:
+        session.deadline = time.monotonic() + self.identify_seconds
+        self._set_live(message, warning=True)
+        self._prompt(session)
+        self.redraw()
+
+    def _check_deadline(self, session: _Identify) -> None:
+        if session.deadline is None:
+            return
+        remaining = session.deadline - time.monotonic()
+        if remaining > 0:
+            self._prompt(session, remaining)
+            return
+        tag = self._asset_tag(session.target)
+        if not session.guided:
+            self._end_identify(
+                f"Nothing responded within {self.identify_seconds:g} s. Check that {tag}'s transmitter is on "
+                "and connected, then try again.", warning=True,
+            )
+            return
+        session.skipped.append(tag)
+        self._set_live(
+            f"Nothing responded for {tag} within {self.identify_seconds:g} s, so it was skipped.", warning=True,
+        )
+        self._next_target(session)
+
+    def _next_target(self, session: _Identify) -> None:
+        session.index += 1
+        while session.index < len(session.targets) and session.target in self.settings.links:
+            session.index += 1  # linked by hand meanwhile
+        if session.index >= len(session.targets):
+            self._end_identify(self._identify_summary(session, "Link All finished." if session.guided else ""))
+            return
+        session.prompted_at = time.perf_counter()
+        session.deadline = None  # it starts once values requested from now on are in
+        session.target_link = None
+        session.wake.set()
+        self._prompt(session)
+        self.redraw()
+
+    def _end_identify(self, message: str, *, error: bool = False, warning: bool = False) -> None:
+        session, self._identify = self._identify, None
+        if session is None:
+            return
+        session.stop.set()
+        if self._identify_poll_id is not None:
+            self.after_cancel(self._identify_poll_id)
+            self._identify_poll_id = None
+        self.identify_bar.grid_remove()
+        self.identify_var.set("")
+        self._set_live(message, error=error, warning=warning)
+        self.redraw()
+
+    def _prompt(self, session: _Identify, remaining: float | None = None) -> None:
+        tag = self._asset_tag(session.target)
+        count = f" ({session.index + 1} of {len(session.targets)})" if session.guided else ""
+        if session.deadline is None:
+            text = f"Identify {tag}{count}: reading the current values…"
+        else:
+            if remaining is None:
+                remaining = session.deadline - time.monotonic()
+            if session.event_devices and session.button_devices:
+                action = "change its instrument's reading, or press its DATA button"
+            elif session.event_devices:
+                action = "change its instrument's reading"
+            else:
+                action = "press its transmitter's DATA button"
+            text = (
+                f"Identify {tag}{count}: {action}. Leave the other instruments alone. "
+                f"{max(math.ceil(remaining), 0)} s left."
+            )
+        if self.identify_var.get() != text:
+            self.identify_var.set(text)
+
+    def _identify_summary(self, session: _Identify, prefix: str) -> str:
+        parts = [prefix] if prefix else []
+        if session.linked:
+            parts.append(f"Linked {_join(session.linked)}.")
+        if session.confirmed:
+            parts.append(f"Confirmed {_join(session.confirmed)}.")
+        if session.by_hand:
+            parts.append(f"{_join(session.by_hand)} {'was' if len(session.by_hand) == 1 else 'were'} linked by hand.")
+        if session.skipped:
+            parts.append(f"Skipped {_join(session.skipped)}.")
+        if not (session.linked or session.confirmed or session.by_hand):
+            parts.append("Nothing was linked.")
+        if session.linked or session.by_hand:
+            parts.append(f"Click Save to keep {'it' if len(session.linked) + len(session.by_hand) == 1 else 'them'}.")
+        return " ".join(parts)
+
+    def _can_use_receiver(self) -> bool:
+        return (
+            not self.scanning and not self._reading and self._identify is None and bool(self.transmitters)
+            and self.receiver is not None and self.settings.port is not None
+        )
+
+    def _update_buttons(self) -> None:
+        ready = self._can_use_receiver()
+        self.read_button.configure(
+            state="normal" if ready else "disabled", text="Reading..." if self._reading else "Read Values",
+        )
+        self.identify_button.configure(state="normal" if ready and self._selected_asset() else "disabled")
+        self.link_all_button.configure(state="normal" if ready and any(
+            asset.asset_id not in self.settings.links for asset in self._visible_assets()
+        ) else "disabled")
+        self.unlink_button.configure(state="normal" if self._selected_link_asset() else "disabled")
+
+    def _selected_asset(self) -> str | None:
+        key = self._selected
+        if key is None or key[0] not in ("asset", "link"):
+            return None
+        return key[1] if any(asset.asset_id == key[1] for asset in self.assets) else None
+
+    def _asset_tag(self, asset_id: str) -> str:
+        asset = next((item for item in self.assets if item.asset_id == asset_id), None)
+        return (asset.tag or asset.asset_id) if asset else asset_id
+
+    def _channel_label(self, device_id: str, *, linked: bool = True) -> str:
+        info = next((item for item in self.transmitters or () if item.device_id == device_id), None)
+        label = f"CH {info.channel:02d}" if info is not None and info.channel is not None else f"ID {device_id}"
+        link = self.settings.link_for_device(device_id) if linked else None
+        return f"{label} ({link.asset_label})" if link else label
 
     def _summary(self) -> str:
         parts = []
@@ -419,7 +999,10 @@ class SetupWindow(tk.Toplevel):
         link = self.settings.links.get(ident)
         label = asset.tag if asset else ident
         if link is None:
-            self._set_hint(f"{label} selected: click a transmitter to link it." if kind == "asset" else DEFAULT_HINT)
+            self._set_hint(
+                f"{label} selected: click a transmitter to link it, or click Identify to find it by changing its "
+                "reading." if kind == "asset" else DEFAULT_HINT,
+            )
             return
         check = check_link(link, self.transmitters)
         prefix = f"{label} selected: click a transmitter to relink it. " if kind == "asset" else f"{label}: "
@@ -453,15 +1036,20 @@ class SetupWindow(tk.Toplevel):
         self.destroy()
 
     def destroy(self) -> None:
-        for after_id in (self._poll_id, self._startup_id):
+        for after_id in (self._poll_id, self._startup_id, self._reading_poll_id, self._identify_poll_id):
             if after_id is not None:
                 self.after_cancel(after_id)
-        self._poll_id = self._startup_id = None
+        self._poll_id = self._startup_id = self._reading_poll_id = self._identify_poll_id = None
+        if self._reading_cancel is not None:
+            self._reading_cancel.set()
+        if self._identify is not None:
+            self._identify.stop.set()
+            self._identify = None
         # Tcl owns the trace callback and the font copies; left behind, they keep this window alive in the host.
         if self._filter_trace is not None:
             self.filter_var.trace_remove("write", self._filter_trace)
             self._filter_trace = None
-        for font in (self._font, self._bold, self._heading):
+        for font in (self._font, self._bold, self._heading, self._value):
             if font.delete_font:
                 font.delete_font = False
                 self.tk.call("font", "delete", font.name)
@@ -500,7 +1088,10 @@ class SetupWindow(tk.Toplevel):
             )
             canvas.create_text(left, y_left, anchor="nw", width=card_width, text=empty, fill=MUTED, font=self._font)
         for key, info, link in rows:
-            self._draw_card(key, left, y_left, card_width, *self._transmitter_text(info, link, visible))
+            self._draw_card(
+                key, left, y_left, card_width, *self._transmitter_text(info, link, visible),
+                value=self._value_text(info), highlight=info is not None and info.device_id in self._moved,
+            )
             y_left += CARD_HEIGHT + CARD_GAP
 
         y_right = HEADER
@@ -510,8 +1101,13 @@ class SetupWindow(tk.Toplevel):
                 else "The ERP passed no assets. Assign equipment to the part first."
             )
             canvas.create_text(right, y_right, anchor="nw", width=card_width, text=empty, fill=MUTED, font=self._font)
+        target = self._identify.target if self._identify is not None and self._identify.deadline is not None else None
         for asset in visible:
-            self._draw_card(("asset", asset.asset_id), right, y_right, card_width, *self._asset_text(asset))
+            link = self.settings.links.get(asset.asset_id)
+            self._draw_card(
+                ("asset", asset.asset_id), right, y_right, card_width, *self._asset_text(asset),
+                highlight=link is not None and link.device_id in self._moved, outlined=asset.asset_id == target,
+            )
             y_right += CARD_HEIGHT + CARD_GAP
 
         for asset in visible:
@@ -532,7 +1128,7 @@ class SetupWindow(tk.Toplevel):
             self._hit[line] = ("link", asset.asset_id)
 
         canvas.configure(scrollregion=(0, 0, width, max(y_left, y_right) + MARGIN))
-        self.unlink_button.configure(state="normal" if self._selected_link_asset() else "disabled")
+        self._update_buttons()
 
     def _visible_assets(self) -> list[Asset]:
         text = self.filter_var.get().strip().lower()
@@ -578,6 +1174,21 @@ class SetupWindow(tk.Toplevel):
             status = ("Not registered", RED)
         return f"CH {info.channel:02d}    ID {info.device_id}", linked, *status, False
 
+    def _value_text(self, info: TransmitterInfo | None) -> tuple[str, str] | None:
+        """The value to show and its colour, or None where there is none to show."""
+        if info is None or info.state != TransmitterState.CONNECTED:
+            return None
+        moved = info.device_id in self._moved
+        if info.mode == MeasurementMode.BUTTON_DRIVEN:  # the value of the latest DATA press, if one was seen
+            pressed = self.pressed.get(info.device_id)
+            return (_format_value(pressed.packet), BLUE if moved else TEXT) if pressed else None
+        result = self.readings.get(info.device_id)
+        if result is None:
+            return None
+        if isinstance(result, LatestReading):
+            return _format_value(result.packet), BLUE if moved else TEXT
+        return _reading_problem(result), AMBER
+
     def _asset_text(self, asset: Asset):
         used_by = f"Used by {', '.join(asset.used_by)}" if asset.used_by else ""
         subtitle = " · ".join(part for part in (asset.name, asset.category, used_by) if part)
@@ -590,18 +1201,29 @@ class SetupWindow(tk.Toplevel):
         prefix = "" if channel is None else f"CH {channel:02d} · "
         return asset.tag or asset.asset_id, subtitle, prefix + label, color, False
 
-    def _draw_card(self, key, x, y, width, title, subtitle, status, color, ghost) -> None:
+    def _draw_card(
+        self, key, x, y, width, title, subtitle, status, color, ghost, *,
+        value: tuple[str, str] | None = None, highlight: bool = False, outlined: bool = False,
+    ) -> None:
         canvas = self.canvas
         selected = self._selected == key
-        outline, line_width = (BLUE, 3) if selected else (CARD_OUTLINE, 1)
+        outline, line_width = (BLUE, 3) if selected or outlined else (CARD_OUTLINE, 1)
         rect = canvas.create_rectangle(
-            x, y, x + width, y + CARD_HEIGHT, fill=GHOST_FILL if ghost else CARD_FILL, outline=outline,
-            width=line_width, **({"dash": (4, 3)} if ghost else {}),
+            x, y, x + width, y + CARD_HEIGHT, fill=MOVED_FILL if highlight else GHOST_FILL if ghost else CARD_FILL,
+            outline=outline, width=line_width, **({"dash": (4, 3)} if ghost else {}),
         )
-        text_width = width - 30
-        items = [
-            rect,
-            canvas.create_text(x + 12, y + 8, anchor="nw", text=_fit(title, self._bold, text_width),
+        text_width = title_width = width - 30
+        items = [rect]
+        if value is not None:
+            value_text, value_color = value
+            value_width = min(self._value.measure(value_text), text_width // 2)
+            items.append(canvas.create_text(
+                x + width - 16, y + 6, anchor="ne", text=_fit(value_text, self._value, value_width),
+                font=self._value, fill=value_color,
+            ))
+            title_width -= value_width + 12
+        items += [
+            canvas.create_text(x + 12, y + 8, anchor="nw", text=_fit(title, self._bold, title_width),
                                font=self._bold, fill=TEXT),
             canvas.create_text(x + 12, y + 26, anchor="nw", text=_fit(subtitle, self._font, text_width),
                                font=self._font, fill=MUTED),
@@ -703,6 +1325,51 @@ class SetupWindow(tk.Toplevel):
         self.status_var.set(text)
         self.status_label.configure(foreground=RED if error else MUTED)
 
+    def _set_live(self, text: str, *, error: bool = False, warning: bool = False) -> None:
+        self.live_var.set(text)
+        self.live_label.configure(foreground=RED if error else AMBER if warning else BLUE)
+
+
+def _event_channels(transmitters: Iterable[TransmitterInfo]) -> dict[str, int]:
+    """Device ID to channel for the transmitters whose latest value the receiver keeps (Event driven only)."""
+    return {
+        info.device_id: info.channel for info in transmitters
+        if info.state == TransmitterState.CONNECTED and info.mode == MeasurementMode.EVENT_DRIVEN
+        and info.channel is not None
+    }
+
+
+def _value_key(result) -> object:
+    """What a value request result says about the instrument's reading; None when it says nothing."""
+    if isinstance(result, LatestReading):
+        return result.packet.value, result.packet.unit
+    if isinstance(result, StatusReported) and result.packet.code == StatusCode.NO_DATA:
+        return _NO_DATA
+    return None
+
+
+def _result_text(result) -> str:
+    return _format_value(result.packet) if isinstance(result, LatestReading) else _reading_problem(result)
+
+
+def _join(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _format_value(packet: MeasurementPacket) -> str:
+    text = format(packet.value, "f")
+    return f"{text} {packet.unit}" if packet.unit else text
+
+
+def _reading_problem(error: Exception) -> str:
+    if isinstance(error, StatusReported):
+        return _READING_PROBLEMS.get(error.packet.code, f"Status {error.packet.code:02d}")
+    if isinstance(error, ResponseTimeout):
+        return "No reply"
+    if isinstance(error, TransmitterChanged):
+        return "Changed: rescan"
+    return "Read failed"
+
 
 def _assets(equipment: Iterable[EquipmentLike]) -> list[Asset]:
     assets: dict[str, Asset] = {}
@@ -743,6 +1410,66 @@ def demo_receiver():
     return receiver
 
 
+class DemoInstruments(tk.Toplevel):
+    """The operator's hands in the demo: change a simulated instrument's reading or press its DATA button.
+
+    A child of the setup window, so the setup window's grab still lets it be clicked.
+    """
+
+    def __init__(self, parent: tk.Misc, receiver):
+        super().__init__(parent)
+        self.title("Demo instruments")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.geometry("-24+80")
+        self.receiver = receiver
+        self._turns: dict[int, int] = {}
+        self._values: dict[int, tk.StringVar] = {}
+        frame = ttk.Frame(self, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Simulated instruments", font="TkHeadingFont").grid(
+            row=0, column=0, columnspan=3, sticky="w",
+        )
+        ttk.Label(frame, text="Try Read Values or Identify, then use these.", foreground=MUTED).grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(0, 8),
+        )
+        for row, (channel, transmitter) in enumerate(sorted(receiver.transmitters.items()), start=2):
+            ttk.Label(frame, text=f"CH {channel:02d}").grid(row=row, column=0, sticky="w", pady=2)
+            self._values[channel] = tk.StringVar(self)
+            ttk.Label(frame, textvariable=self._values[channel], width=16).grid(row=row, column=1, padx=8)
+            if not transmitter.connected:
+                ttk.Label(frame, text="Not connected", foreground=MUTED).grid(row=row, column=2, sticky="w")
+            elif transmitter.mode == MeasurementMode.EVENT_DRIVEN:
+                ttk.Button(frame, text="Change reading", command=lambda c=channel: self.change(c)).grid(
+                    row=row, column=2, sticky="ew",
+                )
+            else:
+                ttk.Button(frame, text="Press DATA", command=lambda c=channel: self.press(c)).grid(
+                    row=row, column=2, sticky="ew",
+                )
+            self._show(channel)
+
+    def change(self, channel: int) -> None:
+        """Turn the instrument a little, back and forth on alternate clicks."""
+        transmitter = self.receiver.transmitters[channel]
+        turn = self._turns[channel] = self._turns.get(channel, 0) + 1
+        step = Decimal(5).scaleb(transmitter.value.as_tuple().exponent)
+        transmitter.value += step if turn % 2 else -step
+        self._show(channel)
+
+    def press(self, channel: int) -> None:
+        self.receiver.press_data(channel)
+        self._show(channel, "sent ")
+
+    def _show(self, channel: int, prefix: str = "") -> None:
+        transmitter = self.receiver.transmitters[channel]
+        if transmitter.value is None:
+            self._values[channel].set("")
+        else:
+            value = format(transmitter.value, "f")
+            self._values[channel].set(f"{prefix}{value} {transmitter.unit or ''}".rstrip())
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Link ERP assets to U-WAVE transmitters.")
     parser.add_argument("--demo", action="store_true", help="use a simulated receiver and sample assets")
@@ -760,6 +1487,7 @@ def main(argv: list[str] | None = None) -> None:
                 list_ports=lambda: [PortInfo(DEMO_PORT, "simulated U-WAVE-R")],
                 default_port=DEMO_PORT, title=f"{TITLE} (demo)",
             )
+            DemoInstruments(window, receiver)
         else:
             window = SetupWindow(root, (), store=ConfigStore(args.settings))
         window.run()

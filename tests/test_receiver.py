@@ -83,6 +83,31 @@ def test_timeout_then_late_reply_cannot_satisfy_the_next_request(receiver):
     assert client.request_latest(3, timeout=5).packet.value == Decimal("12.500")
 
 
+@pytest.mark.parametrize("chunk_size", [None, 4])
+def test_unsolicited_packets_reach_the_listener_and_malformed_ones_are_skipped(receiver, chunk_size):
+    receiver.chunk_size = chunk_size
+    receiver.register(5, "0000055555", "7.50", mode=MeasurementMode.BUTTON_DRIVEN)
+    heard = []
+    client = ReceiverClient(
+        receiver, 7, clock=receiver.clock, now=lambda: RECEIVED_AT,
+        on_unsolicited=lambda packet, received_at: heard.append((packet, received_at)),
+    )
+    receiver.inject(MeasurementPacket(7, 3, Decimal("1.000"), "mm").encode())
+    receiver.interleave(MeasurementPacket(7, 4, Decimal("99"), "mm").encode())
+    assert client.request_latest(3, timeout=5).packet.value == Decimal("12.340")
+    receiver.press_data(5)
+    receiver.inject(b"DT1070X+0000012.340M\r")
+    client.listen(0)
+    assert receiver.clock() == 0
+    assert heard == [
+        (MeasurementPacket(7, 3, Decimal("1.000"), "mm"), RECEIVED_AT),
+        (MeasurementPacket(7, 4, Decimal("99"), "mm"), RECEIVED_AT),
+        (MeasurementPacket(7, 5, Decimal("7.50"), "mm"), RECEIVED_AT),
+    ]
+    client.listen(2)
+    assert receiver.clock() == 2 and len(heard) == 3
+
+
 @pytest.mark.parametrize("raw", [b"DT1070X+0000012.340M\r", b"XX1203070000012345151\r"])
 def test_malformed_or_unsupported_reply_fails_explicitly(receiver, raw):
     receiver.interleave(raw)

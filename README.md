@@ -57,6 +57,22 @@ transmitter identities:
 5. **Save** persists settings; **Cancel** offers Save/Discard/Cancel when changed.
 6. Disconnected, missing, unscanned and button-driven transmitters have visible
    warnings. A new scan invalidates old availability, including if it fails.
+7. **Read Values** shows each Event driven transmitter's latest value on its
+   card (once after a scan, then once per click). Change an instrument, click
+   it again, and the transmitters whose values changed are highlighted and
+   listed below the canvas.
+8. **Identify** links the selected asset to the instrument that responds:
+   change that instrument's reading (Event driven) or press its transmitter's
+   DATA button (Button driven) within 30 seconds. **Link All** asks for each
+   listed asset without a link in turn; **Skip** and **Stop** are in the prompt
+   bar. When several instruments respond, or one already linked to another
+   asset, nothing is linked and it asks again. Unlink and Save work as usual.
+9. The demo also opens a **Demo instruments** window whose buttons change a
+   simulated reading or press a simulated DATA button.
+
+Reading values does not wake the transmitters: the receiver answers from the
+latest value it has stored. Event driven mode itself is what uses more
+transmitter battery than Button driven mode.
 
 Saved demo links use `uwave-accessory-demo.json` in the user's temporary folder.
 Real settings use `%LOCALAPPDATA%\UWaveAccessory\links.json` (per Windows user
@@ -76,7 +92,10 @@ USB support in U-WAVEPAK alone is not sufficient. Close legacy U-WAVEPAK Setup,
 Data I/F and any other port owner before scanning. Select the receiver's actual
 COM port, then its known Group ID (or Auto), and **Scan Receiver**. The scan opens
 and closes the port; it does not automate or read the U-WAVEPAK window, modify
-registrations, change modes or reset the hardware.
+registrations, change modes or reset the hardware. Read Values also opens and
+closes the port; Identify and Link All keep it open until they finish. Whether
+the receiver forwards a Button driven DATA press over the virtual COM port, which
+Identify relies on for those transmitters, is still to be confirmed.
 
 The standalone hardware window has no ERP assets. The host must call
 `uwave_accessory.setup_window.configure(parent, equipment)` with its asset list.
@@ -94,11 +113,11 @@ capture and guaranteed fresh/simultaneous measurements are not supported here.
 | Module | Responsibility |
 | --- | --- |
 | [protocol.py](src/uwave_accessory/protocol.py) | ASCII packet framing and DT/ST/TI/RI decoding; DR/IR requests |
-| [receiver.py](src/uwave_accessory/receiver.py) | Receiver/group discovery, transmitter listing and single-channel latest-value requests |
+| [receiver.py](src/uwave_accessory/receiver.py) | Receiver/group discovery, transmitter listing, single-channel latest-value requests and listening for unsolicited packets |
 | [serial_transport.py](src/uwave_accessory/serial_transport.py) | Optional pyserial connection, 57600 baud, 8N1, RTS/CTS |
 | [links.py](src/uwave_accessory/links.py) | Asset UUID to transmitter Device ID links, scan checks and atomic JSON storage |
-| [setup_window.py](src/uwave_accessory/setup_window.py) | Tkinter visual setup and the demo launcher |
-| [simulation.py](src/uwave_accessory/simulation.py) | Synthetic receiver and controllable test responses |
+| [setup_window.py](src/uwave_accessory/setup_window.py) | Tkinter visual setup, value reading, automated identification and the demo launcher |
+| [simulation.py](src/uwave_accessory/simulation.py) | Synthetic receiver, simulated DATA presses and controllable test responses |
 | [tests](tests) | Protocol, request, loopback transport, mapping and GUI regression tests |
 
 ## Read in this order
