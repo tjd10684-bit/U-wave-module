@@ -1,7 +1,24 @@
 # Validation plan
 
-No tests below have been implemented or passed merely by being listed here.
-Record results by exact supported hardware/software combination when work starts.
+Updated 2026-11-16. Automated tests now exercise the implemented software with
+synthetic devices, serial loopback and Tkinter. A case listed below is not
+automatically covered. There are **no hardware-validated configurations** yet.
+
+Run the complete accessory suite from the checkout:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests -q -rs
+```
+
+Install with the README's `.[serial,test]` extra. Check reported skips: a machine
+without Tkinter/display access cannot verify the GUI, and missing pyserial skips
+loopback tests. No passing software test establishes physical freshness or radio
+timing.
+
+Pre-commit software result (2026-11-16): **92 passed, no skips** on Windows with
+Python 3.12.10, pytest 9.2.0 and pyserial 3.5. `python -m pip check` found no
+broken requirements, and the installed `uwave-setup --help` launcher succeeded.
+This result covers synthetic/loopback/GUI tests only, not a physical receiver.
 
 ## Stage 1: establish the host contract
 
@@ -16,6 +33,9 @@ repository.
 
 The first implementation should preserve the host's existing intended behavior;
 the correct height/indicator formula is a separate requirement to confirm.
+The version 1 contract is now defined, but the U-WAVE capture provider and
+part-specific host asset handoff are not implemented/verified by this repository.
+Its setup callback only displays the equipment it is given.
 
 ## Stage 2: focused software cases without hardware
 
@@ -38,9 +58,25 @@ Use synthetic identities and packets only.
 Add tests for implemented behavior, not for hypothetical abstractions that are
 not needed by the initial integration.
 
+### Implemented software coverage
+
+| Area | Evidence and limits |
+| --- | --- |
+| [Packet codec](tests/test_protocol.py) | Literal DT/ST/TI/RI fixtures, DR/IR field ordering, malformed/unit rejection, fragmented and concatenated stream reads |
+| [Receiver client](tests/test_receiver.py) | Requested-channel routing, ST failures, TI changes, discovery, wrong-group errors and timeouts; late data drained before the next request |
+| [Serial transport](tests/test_serial_transport.py) | Synthetic loopback reads/timeouts, unavailable-port errors and port ordering; no vendor driver exercised |
+| [Links](tests/test_links.py) | One-to-one mapping, Device ID rather than channel identity, scan states, persisted settings and invalid-file rejection |
+| [Setup GUI](tests/test_setup_window.py) | Left/right asset layout, deduplication, optional balloon labels, drag/click linking, unlinking, missing-source cards, save/discard, failed rescans and closing while scanning |
+
+Still open: replies arriving after a new request begins, physical sample age,
+real connection/reconnection guarantees, host capture cancellation/pedal flow,
+multi-instrument completeness, approved unit conversion and mixed transports.
+The simulator assumes inclusive IR searches; it cannot prove that behavior.
+
 ## Stage 3: single legacy receiver on real hardware
 
-1. Verify the direct USB or VCP driver chosen for the implementation.
+1. Verify the VCP driver required by the implemented serial transport. Direct USB
+   working in U-WAVEPAK is not sufficient; direct-USB binding is not implemented.
 2. Establish the normal vendor-tool baseline before native acquisition.
 3. Close software competing for that receiver.
 4. Read configuration and verify the intended source identity/channel.
@@ -52,10 +88,30 @@ not needed by the initial integration.
    No pre-disconnection cached value may be silently represented as a new sample.
 8. Confirm native collection does not also create duplicate keyboard input.
 
+### First hardware-session checklist
+
+- Run the software suite and demo first using a fresh checkout/environment.
+- Record model families, firmware, OS and driver/vendor application versions.
+  Keep actual serials, COM assignments and logs out of the public repository.
+- Scan with the known group first. Compare all registered identities/channels,
+  including disconnected registrations and the first/last occupied channels.
+- Verify ascending IR search inclusivity, ST 51 search termination, wrong-group
+  ST 50 correlation and the Auto group scan.
+- Measure response latency against the current one-second discovery timeout;
+  test a disconnected port, an occupied port and a device changing state mid-scan.
+- Check that cancelling/closing setup releases its port after the scan exits
+  and that failed rescans never leave earlier availability marked ready.
+- Do not use the low-level client's buffer drain as proof of late-response
+  isolation. Establish and test a safe correlation/recovery strategy before
+  connecting captures to real inspection records.
+
 Do not change Group ID, Band ID, initialization state, or unrelated instruments
 just to make an isolated test pass.
 
 ## Stage 4: paired capture and pedal
+
+This is future two-instrument scope. Version 1 indirect capture uses two actions
+on the same instrument; this repository does not yet implement its host provider.
 
 - Verify the physical reference, sign, offset, and units against known dimensions.
 - Associate each physical instrument with its required host role.
@@ -98,4 +154,5 @@ When evidence exists, maintain a small table containing:
 - The software revision and tests associated with the result.
 
 Use model families, not real equipment identities or operator/customer data.
-Documentation-only preparation does not constitute hardware validation.
+Documentation, synthetic tests and a working demo do not constitute hardware
+validation.

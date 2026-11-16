@@ -1,6 +1,6 @@
 # Project handoff
 
-Prepared from the setup and design discussion ending 2026-11-15.
+Updated 2026-11-16 after implementing and testing the accessory groundwork.
 Start with [README.md](README.md), then use this document to resume without the
 original chat or workstation.
 
@@ -21,9 +21,37 @@ original chat or workstation.
 - Continue development from multiple machines and sessions using this repository
   as the durable context, not machine-local chat history.
 
-The owner explicitly deferred implementation during the design discussion and
-then requested this documentation bundle. This handoff does not authorize a
-specific unresolved hardware purchase, packaging choice, or host API design.
+The initial design discussion deferred implementation; subsequent work authorized
+the host-neutral Python package and visual setup window. The
+[version 1 contract](HOST_CONTRACT.md) narrows the initial workflow to one
+instrument per characteristic, including separate A/B actions on that same
+instrument. Two-instrument correction and Bluetooth remain future work.
+
+## Current implementation and next handoff
+
+- The package parses DT/ST/TI/RI packets, encodes DR/IR requests and provides
+  single-channel latest-value requests and transmitter discovery.
+- A pyserial transport implements the documented legacy virtual-COM route.
+  Manufacturer drivers remain external; the direct USB route is not implemented.
+- The setup GUI accepts assets supplied by the ERP on the right, scans registered
+  transmitters on the left, and supports dragging or click-then-click linking.
+- One-to-one links use asset UUID and transmitter Device ID. Group/channel are
+  last-seen addresses, not identities. Settings are local to the Windows user
+  at `%LOCALAPPDATA%\UWaveAccessory\links.json`, not shared ERP inventory.
+- A simulator, serial loopback tests and Tkinter tests exercise software without
+  physical equipment. The demo has sample assets and uses a separate settings
+  file in the user's temporary folder.
+- The ERP capture provider and startup loading are not implemented here.
+  The host must pass this part's eligible assigned assets (including unsaved
+  choices), deduplicated by UUID, with optional `used_by` balloon labels.
+  An empty part list must stay empty, not expand to the full shop inventory.
+  Detailed private host changes were handed to the owning session and are not
+  copied into this repository.
+
+The next task is **hardware verification**, not production inspection. No
+physical receiver or instrument was exercised by this implementation session.
+Use the [README commands](README.md#install-and-try-the-visual-demo) to recreate
+the environment; do not copy this machine's virtual environment or settings.
 
 ## Evidence from the initial setup session
 
@@ -38,7 +66,7 @@ The following are observations, not a formal acceptance test:
 - The documented Data I/F-to-text-application procedure was explained. No
   repeatable, recorded end-to-end ERP acceptance test was performed.
 - The workstation's virtual COM device reported a driver error while direct USB
-  worked. A future serial implementation must verify its own driver installation;
+  worked. The new serial transport still needs its driver installation verified;
   this is not evidence that the direct USB route is broken.
 - The owner reports a separate caliper with a U-WAVE Bluetooth module. Its model
   and software version were not identified or tested in this session.
@@ -55,12 +83,15 @@ workstation into a new installation. Discover and confirm them locally.
   collection systems.
 - Equipment-aware capture, not blind dependence on input arrival order.
 - Public-safe documentation in this repository.
+- A visual accessory-owned linking window using direct receiver queries rather
+  than scraping U-WAVEPAK or reading its undocumented backup format.
+- Python 3.12+, optional pyserial, local settings and a hardware-free demo.
 
 **Design proposals, not yet implemented or finalized**
 
-- Structured readings instead of simulated keystrokes for the native accessory.
-- A capture coordinator that collects and validates the requested pair before
-  handing it to Inspection.
+- A production-ready capture provider satisfying the agreed structured-reading
+  contract rather than emitting keystrokes.
+- Multi-instrument capture; it is not the version 1 same-instrument A/B workflow.
 - A programmable PC-connected pedal invoking a capture action.
 - One Mitutoyo accessory containing separate USB-receiver and Bluetooth backends.
 - Capability declarations for push input, requested cached values, and any
@@ -90,7 +121,8 @@ workstation into a new installation. Discover and confirm them locally.
 
 1. Clone this repository through the developer's normal authenticated Git
    workflow. No local path or credential is required by these notes.
-2. Read these documents before selecting libraries or writing device code.
+2. Create a fresh Python environment and run the test/demo commands in
+   [README.md](README.md). Check for skips: GUI tests require Tkinter.
 3. Obtain a separately authorized checkout of the private host application.
    Inspect its current inspection input, equipment assignment, calculation,
    persistence, packaging, and extension mechanisms. Do not copy private source
@@ -101,13 +133,21 @@ workstation into a new installation. Discover and confirm them locally.
    [REFERENCES.md](REFERENCES.md); follow the vendor's licensing and installation
    requirements. Do not copy an unrelated application's Python environment or
    local research tooling from the earlier session.
-6. Choose one transport for an initial proof of concept. Legacy U-WAVE-R is a
-   reasonable candidate because its basic connection was observed, but no
-   transport or programming language has been committed to.
-7. Agree the minimum host/accessory contract and capture behavior. Validate it
-   with simulated devices before relying on hardware.
-8. Perform the relevant [validation checks](VALIDATION_PLAN.md), then expand to
-   Bluetooth and mixed capture only with separate evidence.
+6. Establish the vendor-tool baseline, then close legacy U-WAVEPAK and Data I/F.
+   Verify that the receiver has a working VCP driver and select that port in the
+   standalone window. Do not pick a COM port just because it is first in the list.
+7. Prefer the receiver's known Group ID for the first scan. Compare receiver and
+   transmitter identities, channels, modes and connected/disconnected states
+   against U-WAVEPAK's recorded setup. Rescan after reconnecting.
+8. Confirm ascending IR searches include the requested starting channel; verify
+   the Auto group's wrong-group ST 50 behavior and end-of-search ST 51. The scan
+   uses one second per request, not one second for the whole scan.
+9. Exercise latest-value requests separately before connecting a capture provider.
+   Verify unchanged readings, missing data, status, units, reconnects and late
+   replies. A PC response timestamp is not the physical measurement time.
+10. Perform the relevant [validation checks](VALIDATION_PLAN.md). Do not enable
+    production capture until request correlation, reconnection and source
+    verification are sound. Bluetooth/mixed operation needs separate work.
 
 At each handoff, update the supported model/version matrix, decisions, unresolved
 questions, and exact verified development commands in the repository. Keep local
@@ -119,14 +159,20 @@ serial numbers, COM assignments, operator data, and logs out of committed exampl
   compatible event-driven behavior.
 - Whether the existing indirect calculation matches the physical fine-correction
   arrangement.
-- Host extension API and whether acquisition runs in-process or in a helper.
-- Programming language, package/installer format, supported OS versions, license,
-  and driver redistribution policy.
-- Legacy direct USB versus virtual COM for the first implementation.
+- Capture provider, startup registration/loader and frozen-app distribution.
+  The initial API is in-process Python; a helper process remains a later option.
+- Installer format, supported hardware/OS matrix, license and driver
+  redistribution policy. Python and the initial VCP transport are implemented.
 - Precise Bluetooth virtual-COM command compatibility; the setup guide documents
   higher-level access but is not a complete command specification.
-- Timeout, stable-reading policy, reconnection behavior, user feedback, and
-  whether a requested pair must have a defined sampling relationship.
+- The host timeout is five seconds; the setup scan uses one second per request.
+  Validate those limits and establish stable-reading/reconnection policy.
+- Request correlation: draining buffered input cannot identify an old reply that
+  arrives after the next request begins. IR search replies also cannot be
+  distinguished from some unsolicited TI changes. These are unresolved limits,
+  not guarantees supplied by the simulator.
+- Future multi-instrument sampling relationship and transport-qualified source
+  identity when more than one receiver/transport is supported.
 - Pedal model, trigger binding, duplicate-trigger handling, and supported
   application-focus behavior.
 - Whether mixed Bluetooth and U-WAVE-R operation is supported on the target PCs.

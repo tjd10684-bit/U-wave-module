@@ -84,8 +84,9 @@ ordered or simultaneous multi-instrument acquisition.
 ## Evidence boundaries
 
 - Legacy receiver/transmitter communication was observed during the session.
-- Native software requests, pedal-controlled acquisition, Bluetooth integration,
-  and mixed transport capture were not implemented or tested.
+- Native requests and discovery now have an implementation and synthetic tests;
+  they have not been tested with the physical receiver. Pedal-controlled host
+  acquisition, Bluetooth integration and mixed transport capture remain future work.
 - The owner described the desired host workflow. Private host source is not
   included, quoted, or documented here; inspect it separately with authorization.
 - The documents distinguish manufacturer-documented behavior from proposed

@@ -52,7 +52,7 @@ For the legacy transmitter, a short DATA press is under 2 seconds. Holding for
 5 to less than 10 seconds runs a receiver scan. Do not turn a pedal trigger into
 an assumed long DATA press.
 
-### Documented messages worth implementing first
+### Implemented packet subset
 
 The legacy manual uses ASCII packets terminated by carriage return. Its Appendix
 is Chapter 6, although some internal cross-references incorrectly say Chapter 7.
@@ -69,6 +69,35 @@ The documented `DR` fields are packet code, API version, channel, group,
 clear-after-output flag, search method, and CR terminator (10 bytes total).
 Consult the table before encoding messages; do not infer field order from UI
 columns.
+
+The [codec](src/uwave_accessory/protocol.py) implements the following layouts.
+Widths include the CR terminator; all fields are ASCII:
+
+| Packet | Bytes | Field order after the two-character code and one-character API version |
+| --- | --- | --- |
+| `DT` | 21 | group (2), channel (2), sign (1), value (11), unit (1), CR |
+| `ST` | 20 | group (2), channel (2), Device ID (10), status (2), CR |
+| `TI` | 22 | state (1), channel (2), group (2), Device ID (10), band (2), mode (1), CR |
+| `RI` | 68 | group (2), Device ID (10), band (2), omission level (1), duplicate flag (1), 15 noise levels (3 each), dummy (3), CR |
+| `DR` | 10 | channel (2), group (2), clear flag (1), search (1), CR |
+| `IR` | 10 | destination (1), channel (2), group (2), search (1), CR |
+
+`IR` destination 0 queries the receiver; 1 queries transmitters. Transmitter
+search 0 is specific, 1 ascending, 2 descending. A specific missing registration
+returns ST 50; an exhausted search returns ST 51. TI state 2 is connected,
+1 registered/disconnected, and 3-5 editing states. TI mode 0 is Button driven,
+1 Event driven. TI and RI can report factory-default address fields as `FF`.
+
+The setup scan reads RI then walks registered transmitters using ascending IR
+queries. It assumes the starting channel is included; verify this on hardware.
+Auto group detection tries 00-99, continuing after a request-error ST 50 and
+stopping on a timeout. It assumes the wrong-group response echoes the requested
+group/channel. A manually selected known group avoids that detection step.
+
+The receiver also sends unsolicited TI changes. A higher-channel TI arriving
+mid-scan may be mistaken for the search reply and cause registrations to be
+missed. Discovery is not an atomic snapshot; verify it against the vendor setup
+and rescan after changes.
 
 A specific-channel request uses a channel from 00 to 99. The special channel
 `FF` requests all channels with available data and supports ascending or
@@ -88,6 +117,25 @@ Interpret status in context; never feed a status packet into a numeric input.
 Decide clear-after-output behavior only after testing stable unchanged readings.
 Clearing a latest-value buffer without another instrument change can leave no
 new data for the next request.
+
+### Current client behavior and limits
+
+- The [request client](src/uwave_accessory/receiver.py) requests one channel;
+  it refuses all-channel latest-value requests to avoid silent omissions.
+- Any ST for that requested channel, including low battery or an unknown status,
+  raises an explicit error. A TI state change for it also fails the request.
+- Values are retained as `Decimal`. Unit `0` becomes an explicit missing unit
+  (`None`), not inferred mm/in; a future host adapter must reject it.
+- DT carries neither Device ID nor sample time. Its PC receipt time does not
+  claim a fresh physical sample; identity must come from verified TI bindings.
+- Buffered output and partial packets are discarded before a new request.
+  The protocol has no request ID: an old reply that arrives after that drain
+  remains indistinguishable from a new reply. Current tests cover draining
+  already-arrived late data, not a complete late-response guarantee.
+- Setup uses one second per IR request. Serial writes have a two-second timeout.
+  Neither is a validated hardware latency guarantee or an overall scan timeout.
+- The [serial transport](src/uwave_accessory/serial_transport.py) implements VCP
+  only. There is no direct-USB driver binding or U-WAVEPAK GUI/backup-file reader.
 
 ## 2. Bluetooth U-WAVE-TCB/TMB path
 

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uwave-accessory"
+version = "0.0.1"
+description = "Pre-release groundwork: Mitutoyo U-WAVE-R protocol layer for an Open ERP measurement accessory"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+serial = ["pyserial>=3.5"]
+test = ["pytest>=8", "pyserial>=3.5"]
+
+[project.scripts]
+uwave-setup = "uwave_accessory.setup_window:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

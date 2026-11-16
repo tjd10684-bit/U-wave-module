@@ -1,8 +1,27 @@
-# Proposed accessory architecture
+# Accessory architecture and boundaries
 
-This is a design boundary, not an existing API or final implementation plan.
-Use the smallest interface that satisfies the initial integration, and revise it
-with evidence from the host and hardware.
+The initial API is described in [HOST_CONTRACT.md](HOST_CONTRACT.md).
+The host-neutral package implements protocol, VCP transport, discovery and the
+visual setup window; the ERP capture provider is still missing. Broader
+multi-instrument behavior below is a design boundary, not implemented support.
+
+## Implemented setup path
+
+```text
+Host-supplied assets -> visual linking window <- IR/RI/TI receiver discovery
+                                  |
+                      local asset UUID -> Device ID links
+```
+
+The setup window does not query or change the ERP database. It displays the
+supplied equipment, with optional balloon labels, and records one-to-one links.
+The host remains responsible for supplying the current part's eligible assets.
+Discovery runs off the Tk thread and closes the COM port after scanning. Each
+scan invalidates previous availability; failure leaves links unverified.
+
+Saved addresses can follow a Device ID to another channel. A capture provider
+must revalidate the source and mode at acquisition time; a saved link or a green
+setup card is not a substitute for live capture validation.
 
 ## Preserve two input paths
 
@@ -30,13 +49,14 @@ Bluetooth access, or the native accessory being enabled.
 | Calculations, tolerance decisions, persistence | Readings with source identity, units, and known timing/status |
 | Capture lifecycle and prevention of partial submissions | Advertise real acquisition capabilities and execute supported requests |
 
-The exact ownership of the capture coordinator can be settled during host API
-design. Do not duplicate tolerance logic or inspection calculations in every
-transport implementation.
+The version 1 contract leaves capture coordination with the host and mapping
+with the accessory. Do not duplicate tolerance logic or inspection calculations
+in transport implementations.
 
 ## Minimum information to discuss for the contract
 
-This is a checklist, not a mandate to create these classes or fields verbatim:
+The version 1 contract settles the initial fields; this checklist also guides
+later extensions:
 
 - Accessory identity and capabilities.
 - A stable instrument/transmitter identity plus its current connection address.
@@ -64,7 +84,7 @@ Bluetooth bridge rows also map to channels and can change after registration
 edits. COM numbers can differ on another PC. Validate bindings at setup and after
 reconnection rather than hard-code a workstation's enumeration.
 
-For a two-instrument capture:
+For a future two-instrument capture (not the initial same-instrument A/B flow):
 
 1. Determine the required equipment roles from the active inspection step.
 2. Resolve both identities and verify the needed capabilities.
@@ -76,6 +96,10 @@ For a two-instrument capture:
 
 An accessory may receive results out of order. That must not change their roles.
 A delayed result from an expired request must not become the next measurement.
+The current request client cannot guarantee this: it drains buffered responses
+before writing, but legacy packets contain no request ID. A reply arriving after
+the drain can be mistaken for the new reply. Resolve that before production
+capture integration.
 
 ## Cached data, timing, and reconnection
 
@@ -92,7 +116,8 @@ not promise synchronized physical sampling on the pedal event.
   data. Invalidate assumptions after disconnect, mode changes, or source rebinding.
 - Define what the operator must hold stable during capture and what guarantees
   the hardware cannot provide.
-- Choose timeout and stale-data policies explicitly; they remain open decisions.
+- The host timeout is five seconds; setup discovery uses one second per request.
+  Hardware response limits and stale-data policy still need validation.
 
 Do not describe a capture as "simultaneous" unless the hardware and tests justify
 that term.
@@ -113,8 +138,8 @@ The legacy collector must not compete with U-WAVEPAK Data I/F for its receiver.
 ## Portability and optional installation
 
 - Keep vendor-specific drivers and dependencies optional.
-- Do not choose a package framework or dependency stack until the host extension
-  and distribution requirements are understood.
+- The development package uses setuptools and optional pyserial. Frozen-app
+  loading and installer/driver distribution remain separate decisions.
 - Keep connection settings, IDs, and other site-specific information outside
   committed examples.
 - Provide synthetic protocol fixtures and simulated acquisition so most software
