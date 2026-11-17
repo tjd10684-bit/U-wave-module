@@ -1,6 +1,7 @@
 # Project handoff
 
-Updated 2026-11-16 after implementing and testing the accessory groundwork.
+Updated 2026-11-17: the experimental U-WAVE helper module is built against the
+Open ERP contract ([sdk/](sdk/README.md)). Physical hardware remains untested.
 Start with [README.md](README.md), then use this document to resume without the
 original chat or workstation.
 
@@ -49,17 +50,44 @@ instrument. Two-instrument correction and Bluetooth remain future work.
 - A simulator, serial loopback tests and Tkinter tests exercise software without
   physical equipment. The demo has sample assets and uses a separate settings
   file in the user's temporary folder.
-- The ERP capture provider and startup loading are not implemented here.
-  The host must pass this part's eligible assigned assets (including unsaved
-  choices), deduplicated by UUID, with optional `used_by` balloon labels.
-  An empty part list must stay empty, not expand to the full shop inventory.
+- Open ERP installs measurement modules as separate helper programs that speak
+  [`sdk/PROTOCOL.md`](sdk/PROTOCOL.md). `module/uwave_module.py` reuses this
+  package's protocol, serial transport, links, simulator and setup window. The
+  module offers a Simulator port and uses its host-provided data directory;
+  standalone settings are separate and are not migrated automatically.
+- The helper re-identifies the saved transmitter by Device ID within the
+  capture deadline, follows its current channel, checks the acquisition mode,
+  and returns the reported units and a stable transmitter source ID.
+  `build_module.ps1` produces `module/build/mitutoyo-u-wave-0.1.0.zip`.
+  The built module passed `host_check`, Open ERP's real module-manager install,
+  setup-window launch, and simulator capture checks.
+  The host supplies the asset list; the module does not query the ERP database.
+  The helper contract currently supplies tags, names and categories, but not the
+  optional `used_by` balloon labels supported by the standalone setup window.
   Detailed private host changes were handed to the owning session and are not
   copied into this repository.
 
+### Local 0.1.0 build verification
+
+- All **130 tests passed** (`python -m pytest tests sdk/python/tests -q`).
+- Rebuilt the module after fixing capture's setup-lock timeout and ensuring
+  transport closure happens before releasing the receiver lock. SDK
+  `host_check` passed against the frozen helper.
+- An isolated PyInstaller-frozen host harness installed the package, captured
+  **12.345 mm** and **0.5000 in** from the simulator, rejected mismatched units,
+  updated the module while preserving links, and stopped both helpers cleanly.
+  The source host also opened and closed the visual setup window. The full
+  interactive packaged-host workflow remains a manual check.
+- Package: `module/build/mitutoyo-u-wave-0.1.0.zip`, 10,931,729 bytes, SHA256
+  `3367ecceac6584d27699f23d270769c0b8b456ecb002117a815c331797a7049c`.
+  The bundle contains the public module/SDK, not private ERP source.
+- Built locally; no push or publication was authorized for this release task.
+
 The next task is **hardware verification**, not production inspection. No
 physical receiver or instrument was exercised by this implementation session.
-Use the [README commands](README.md#install-and-try-the-visual-demo) to recreate
-the environment; do not copy this machine's virtual environment or settings.
+Use the [module build instructions](README.md#build-and-try-the-open-erp-module)
+to build a tester package; do not copy this machine's virtual environment or
+settings.
 
 ## Evidence from the initial setup session
 
@@ -170,8 +198,9 @@ serial numbers, COM assignments, operator data, and logs out of committed exampl
   compatible event-driven behavior.
 - Whether the existing indirect calculation matches the physical fine-correction
   arrangement.
-- Capture provider, startup registration/loader and frozen-app distribution.
-  The initial API is in-process Python; a helper process remains a later option.
+- Physical validation of the U-WAVE-R/VCP route, including request timing,
+  transmitter re-registration, channel changes, reconnects and forwarded DATA
+  presses.
 - Installer format, supported hardware/OS matrix, license and driver
   redistribution policy. Python and the initial VCP transport are implemented.
 - Precise Bluetooth virtual-COM command compatibility; the setup guide documents

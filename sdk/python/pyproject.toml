@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-erp-module"
+version = "1.0.0"
+description = "Build Open ERP measurement modules: helper programs that connect measuring devices to Open ERP"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+open-erp-module-check = "open_erp_module.host_check:main"
+open-erp-module-package = "open_erp_module.package:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -113,6 +113,16 @@ def test_scan_lists_transmitters_left_and_each_asset_once_right(root, receiver, 
     window.destroy()
 
 
+def test_port_selection_notifies_module_about_selected_port(root, receiver, store):
+    selected = []
+    window = open_window(root, receiver, store, on_port_selected=selected.append)
+
+    window._port_changed()
+
+    assert selected == ["SIM"]
+    window.destroy()
+
+
 def test_drag_links_either_way_and_delete_unlinks(root, receiver, store):
     window = open_window(root, receiver, store)
     drag(window, point(window, TX1), point(window, ("asset", "a1")))
@@ -521,5 +531,5 @@ def test_closing_during_identify_stops_the_worker_and_frees_the_port(root, recei
     window.destroy()
     worker.join(timeout=5)
     assert not worker.is_alive()
-    assert setup_window._PORT_LOCK.acquire(timeout=1)
-    setup_window._PORT_LOCK.release()
+    assert setup_window.PORT_LOCK.acquire(timeout=1)
+    setup_window.PORT_LOCK.release()

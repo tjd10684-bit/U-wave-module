@@ -4,6 +4,12 @@ Agreed 2026-11-16. This describes the initial ERP-facing contract, not working
 U-WAVE hardware support. It supersedes earlier proposals for simultaneous or
 two-instrument captures in this repository. Those remain future work.
 
+Separately installed measurement modules now run as helper programs under the
+contract in [`sdk/PROTOCOL.md`](sdk/PROTOCOL.md). Open ERP's module host
+registers the provider described below on their behalf, so the operator
+workflow and the host's reading-acceptance rules here apply to module readings
+too.
+
 ## Initial scope and operator workflow
 
 - One selected Metrology asset per characteristic. Indirect inputs A and B use
@@ -72,12 +78,12 @@ raise `AccessoryError` through the future for connection/protocol failures.
 Never call Tk controls from a worker. Cancellation must release the accessory's
 own pending-request state even if the underlying I/O cannot be interrupted.
 
-This is a registration hook, **not an external-plugin installer or automatic
-package-discovery mechanism**. A bundled adapter can register at startup; a
-separately installed accessory/helper and frozen-app distribution still need
-an agreed loader/bridge. No driver, vendor DLL or U-WAVE collector is supplied
-by this contract. The accessory's protocol/discovery client and setup window do
-not yet implement the capture provider described here.
+This in-process hook is the host's internal seam. A separately installed module
+does not import Open ERP: it is a helper program that speaks
+[`sdk/PROTOCOL.md`](sdk/PROTOCOL.md), and Open ERP's module host adapts it to
+this hook. No driver or vendor DLL is supplied by this contract. The experimental
+U-WAVE helper wraps the accessory's protocol/discovery client and setup window;
+physical hardware behavior remains unverified.
 
 ## Capture request
 

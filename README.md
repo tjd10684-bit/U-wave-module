@@ -3,11 +3,11 @@
 An optional measurement-data collection accessory for Open ERP's inspection
 workflow.
 
-**Status: experimental accessory groundwork, 2026-11-16.** The legacy receiver
+**Status: experimental U-WAVE helper module, 2026-11-17.** The legacy receiver
 protocol, virtual-COM transport, simulated receiver, visual asset-linking window
-and automated tests are implemented. They have not been validated on physical
-hardware. The ERP capture provider, automatic loading and installer are not yet
-implemented.
+and Open ERP helper package are implemented and tested against the simulator.
+They have not been validated on physical hardware. The module uses Open ERP's
+separate helper-program contract (see the [module SDK](sdk/README.md)).
 
 ## Goal
 
@@ -28,8 +28,7 @@ the current implementation does not perform it.
 indirect A and B are separate readings from that same instrument. Two-instrument
 capture is deferred. See [the version 1 host contract](HOST_CONTRACT.md) for
 module-owned asset/transmitter setup, Capture/Ctrl+M versus HID input, and the
-five-second host timeout. The protocol client can request a channel's latest
-stored value, but it does not yet deliver captures into the ERP.
+five-second host timeout.
 
 ## Install and try the visual demo
 
@@ -79,6 +78,31 @@ Real settings use `%LOCALAPPDATA%\UWaveAccessory\links.json` (per Windows user
 on this workstation); `--settings PATH` selects another location. Do not commit
 shop settings or real device identities.
 
+## Build and try the Open ERP module
+
+The installable helper includes the visual asset/transmitter setup and offers a
+**Simulator (demo)** port, so it can be tried without a receiver. From this
+checkout, use Python 3.12 or newer with Tkinter:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[serial,test]" pyinstaller
+.\build_module.ps1 -Python .\.venv\Scripts\python.exe
+```
+
+The package is written to
+`module\build\mitutoyo-u-wave-0.1.0.zip`. In an Open ERP build containing the
+measurement-module host, choose **Settings > Measurement Devices... > Add
+Module...** and select that zip. Select **Mitutoyo U-WAVE**, choose
+**Open Setup...**, select **Simulator (demo)**, then use the existing visual
+linking interface to link a transmitter to an eligible asset and save. The demo
+instrument window lets you change readings or press DATA; Capture (Ctrl+M)
+returns the linked simulated transmitter's latest value.
+
+The module stores its settings in Open ERP's per-user
+`%LOCALAPPDATA%\Open ERP\module-data\mitutoyo-u-wave\links.json`. The standalone
+hardware window's `%LOCALAPPDATA%\UWaveAccessory\links.json` is separate and is not
+automatically migrated.
+
 ## On the hardware computer
 
 Start without `--demo` to inspect the actual receiver:
@@ -97,12 +121,13 @@ closes the port; Identify and Link All keep it open until they finish. Whether
 the receiver forwards a Button driven DATA press over the virtual COM port, which
 Identify relies on for those transmitters, is still to be confirmed.
 
-The standalone hardware window has no ERP assets. The host must call
-`uwave_accessory.setup_window.configure(parent, equipment)` with its asset list.
-The requested part-specific list includes unsaved assignments, deduplicated by
-asset UUID; optional `used_by` balloon labels are displayed. Supplying this list
-and registering a real capture provider remain host-integration work. Do not
-mistake a saved visual link for a verified measurement connection.
+The standalone hardware window has no ERP assets. In the helper module,
+**Open Setup...** receives the assets supplied by Open ERP and uses this same
+visual linking interface. Capture re-identifies a linked transmitter by Device
+ID and follows its current channel before requesting a reading. The simulated
+path and module integration are tested; real receiver/transmitter behavior is
+not yet verified. Do not mistake a saved visual link for a verified hardware
+connection.
 
 Start with the checks in [HANDOFF.md](HANDOFF.md) and
 [VALIDATION_PLAN.md](VALIDATION_PLAN.md). Bluetooth, mixed receivers, paired
@@ -118,6 +143,7 @@ capture and guaranteed fresh/simultaneous measurements are not supported here.
 | [links.py](src/uwave_accessory/links.py) | Asset UUID to transmitter Device ID links, scan checks and atomic JSON storage |
 | [setup_window.py](src/uwave_accessory/setup_window.py) | Tkinter visual setup, value reading, automated identification and the demo launcher |
 | [simulation.py](src/uwave_accessory/simulation.py) | Synthetic receiver, simulated DATA presses and controllable test responses |
+| [module/](module/) | Open ERP helper entry point, manifest and module build output |
 | [tests](tests) | Protocol, request, loopback transport, mapping and GUI regression tests |
 
 ## Read in this order
@@ -125,6 +151,7 @@ capture and guaranteed fresh/simultaneous measurements are not supported here.
 | Document | Purpose |
 | --- | --- |
 | [HOST_CONTRACT.md](HOST_CONTRACT.md) | Agreed initial host API, single-instrument scope, mapping ownership and capture safeguards |
+| [sdk/README.md](sdk/README.md) | Measurement module SDK: the helper-program protocol, Python library, `host_check` and an example module |
 | [HANDOFF.md](HANDOFF.md) | Session context, agreed direction, evidence, unknowns, and how to resume on another machine |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Proposed host/accessory boundary and acquisition guarantees |
 | [PROTOCOL_NOTES.md](PROTOCOL_NOTES.md) | Distinct USB-receiver and Bluetooth routes, ordering, cached readings, and pedal limitations |
@@ -150,6 +177,8 @@ the agreed interface documentation. It does not contain private ERP source or
 internal integration patches, real device identities, shop settings, credentials,
 or copies of manufacturer manuals/software.
 
-Hardware selection, accessory packaging, licensing and distribution remain open.
-The initial host registration seam is Python; an external helper/installer is
-not supplied. The contract does not establish working U-WAVE hardware support.
+Hardware selection, licensing and driver distribution remain open. Open ERP
+installs measurement modules as separate helper programs under
+[`sdk/PROTOCOL.md`](sdk/PROTOCOL.md); the U-WAVE helper package is experimental.
+The contract and simulator tests do not establish working physical U-WAVE
+hardware support.

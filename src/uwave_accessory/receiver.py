@@ -17,13 +17,19 @@ from typing import Callable, Iterable, Protocol, TypeVar
 
 from .protocol import (
     ALL_CHANNELS, DataRequest, Destination, InfoRequest, MeasurementPacket, Packet, PacketError, PacketFramer,
-    ReceiverInfo, Search, StatusCode, StatusPacket, TransmitterInfo, TransmitterState, parse_packet,
+    ReceiverInfo, Search, StatusCode, StatusPacket, TransmitterInfo, TransmitterState, is_device_id, parse_packet,
 )
 
 logger = logging.getLogger(__name__)
 _STALE_OUTPUT_LIMIT = 64 * 1024
-_END_OF_SEARCH = object()
 T = TypeVar("T")
+
+
+class _EndOfSearch:
+    pass
+
+
+_END_OF_SEARCH = _EndOfSearch()
 
 
 class Transport(Protocol):
@@ -160,28 +166,56 @@ class ReceiverClient:
         found: list[TransmitterInfo] = []
         start = 0
         while start <= 99:
-            request = InfoRequest(Destination.TRANSMITTER, start, self.group, Search.ASCENDING)
-
-            def accept(packet: Packet, _received_at: datetime, start: int = start) -> object | None:
-                if (
-                    isinstance(packet, TransmitterInfo) and packet.channel is not None
-                    and packet.channel >= start and packet.state != TransmitterState.NOT_REGISTERED
-                ):
-                    return packet
-                if (
-                    isinstance(packet, StatusPacket) and packet.code == StatusCode.END_OF_SEARCH
-                    and packet.group == self.group and packet.channel == start
-                ):
-                    return _END_OF_SEARCH
-                self._raise_request_error(packet, request)
-                return None
-
-            result = self._exchange(request.encode(), timeout, f"Transmitter search from channel {start:02d}", accept)
-            if result is _END_OF_SEARCH:
+            result = self._search_transmitter(start, timeout)
+            if isinstance(result, _EndOfSearch):
                 break
             found.append(result)
             start = result.channel + 1
         return found
+
+    def find_transmitter(self, device_id: str, timeout: float) -> TransmitterInfo:
+        """Find a registered transmitter by identity within one total timeout."""
+        if not is_device_id(device_id):
+            raise ValueError(f"invalid device ID {device_id!r}")
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not (
+            math.isfinite(timeout) and timeout > 0
+        ):
+            raise ValueError("timeout must be a positive number of seconds")
+        deadline = self._clock() + timeout
+        start = 0
+        while start <= 99:
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                raise ResponseTimeout(f"Transmitter search for {device_id}: timed out after {timeout:g} seconds.")
+            result = self._search_transmitter(start, remaining, f"Transmitter search for {device_id}")
+            if isinstance(result, _EndOfSearch):
+                break
+            if result.device_id == device_id:
+                return result
+            start = result.channel + 1
+        raise ReceiverError(f"Transmitter {device_id} is not registered in receiver group {self.group:02d}.")
+
+    def _search_transmitter(
+        self, start: int, timeout: float, label: str | None = None,
+    ) -> TransmitterInfo | _EndOfSearch:
+        request = InfoRequest(Destination.TRANSMITTER, start, self.group, Search.ASCENDING)
+
+        def accept(packet: Packet, _received_at: datetime, start: int = start) -> TransmitterInfo | _EndOfSearch | None:
+            if (
+                isinstance(packet, TransmitterInfo) and packet.channel is not None
+                and packet.channel >= start and packet.state != TransmitterState.NOT_REGISTERED
+            ):
+                return packet
+            if (
+                isinstance(packet, StatusPacket) and packet.code == StatusCode.END_OF_SEARCH
+                and packet.group == self.group and packet.channel == start
+            ):
+                return _END_OF_SEARCH
+            self._raise_request_error(packet, request)
+            return None
+
+        label = label or f"Transmitter search from channel {start:02d}"
+        return self._exchange(request.encode(), timeout, label, accept)
 
     def listen(self, duration: float) -> None:
         """Receive for duration seconds without a request, passing every packet to on_unsolicited.

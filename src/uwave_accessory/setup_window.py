@@ -58,9 +58,9 @@ CANVAS_BG, CARD_FILL, GHOST_FILL, MOVED_FILL, CARD_OUTLINE, TEXT, MUTED, PROMPT_
     "#f4f6f8", "#ffffff", "#eceff1", "#fff3c4", "#b0bec5", "#212121", "#546e7a", "#e3f2fd",
 )
 
-# Windows opens a COM port exclusively, so scans, value reads and identification,
+# Windows opens a COM port exclusively, so scans, value reads, captures and identification,
 # including those of a window that is closing, take turns.
-_PORT_LOCK = threading.Lock()
+PORT_LOCK = threading.Lock()
 _NO_DATA = "no data"
 _LISTEN_SLICE = 0.05  # seconds; how quickly identification notices a new target or a stop
 
@@ -183,7 +183,7 @@ def watch_for_responses(
             presses.append((button_channels[packet.channel], LatestReading(packet, received_at)))
 
     try:
-        with _PORT_LOCK:
+        with PORT_LOCK:
             if stop.is_set():
                 return
             transport = open_transport(port)
@@ -272,6 +272,7 @@ class SetupWindow(tk.Toplevel):
         title: str = TITLE,
         identify_seconds: float = IDENTIFY_SECONDS,
         identify_interval: float = IDENTIFY_INTERVAL,
+        on_port_selected: Callable[[str | None], None] | None = None,
     ):
         super().__init__(parent)
         self.title(title)
@@ -280,6 +281,7 @@ class SetupWindow(tk.Toplevel):
         self.list_ports = list_ports
         self.identify_seconds = identify_seconds
         self.identify_interval = identify_interval
+        self.on_port_selected = on_port_selected
         self.assets = _assets(equipment)
         self.saved = False
         self.dirty = False
@@ -457,6 +459,8 @@ class SetupWindow(tk.Toplevel):
 
     def _port_changed(self, _event=None) -> None:
         port = self._port_labels.get(self.port_var.get())
+        if self.on_port_selected is not None:
+            self.on_port_selected(port)
         if port and port != self.settings.port:
             self.settings.port = port
             self._settings_changed()
@@ -500,7 +504,7 @@ class SetupWindow(tk.Toplevel):
         open_transport: Callable[[str], Transport], results: queue.Queue, port: str, group: int | None,
     ) -> None:
         try:
-            with _PORT_LOCK:
+            with PORT_LOCK:
                 result = scan_receiver(open_transport, port, group)
         except ReceiverError as error:
             result = error
@@ -566,7 +570,7 @@ class SetupWindow(tk.Toplevel):
         channels: dict[str, int], cancel: threading.Event,
     ) -> None:
         try:
-            with _PORT_LOCK:
+            with PORT_LOCK:
                 result = {} if cancel.is_set() else read_latest_values(
                     open_transport, port, group, channels, cancel=cancel,
                 )

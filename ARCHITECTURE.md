@@ -2,8 +2,10 @@
 
 The initial API is described in [HOST_CONTRACT.md](HOST_CONTRACT.md).
 The host-neutral package implements protocol, VCP transport, discovery and the
-visual setup window; the ERP capture provider is still missing. Broader
-multi-instrument behavior below is a design boundary, not implemented support.
+visual setup window. `module/uwave_module.py` adapts it to Open ERP's helper
+protocol and implements single-transmitter latest-value capture. Physical
+hardware and broader multi-instrument behavior remain unverified or out of
+scope.
 
 ## Implemented setup path
 
@@ -15,7 +17,7 @@ Host-supplied assets -> visual linking window <- IR/RI/TI receiver discovery
 
 The setup window does not query or change the ERP database. It displays the
 supplied equipment, with optional balloon labels, and records one-to-one links.
-The host remains responsible for supplying the current part's eligible assets.
+The host remains responsible for choosing the asset list supplied to setup.
 Discovery runs off the Tk thread and closes the COM port after scanning. Each
 scan invalidates previous availability; failure leaves links unverified.
 
@@ -151,8 +153,10 @@ The legacy collector must not compete with U-WAVEPAK Data I/F for its receiver.
 ## Portability and optional installation
 
 - Keep vendor-specific drivers and dependencies optional.
-- The development package uses setuptools and optional pyserial. Frozen-app
-  loading and installer/driver distribution remain separate decisions.
+- The development package uses setuptools and optional pyserial. Open ERP
+  installs modules as separate helper-program packages
+  ([`sdk/PROTOCOL.md`](sdk/PROTOCOL.md)); driver distribution remains a separate
+  decision.
 - Keep connection settings, IDs, and other site-specific information outside
   committed examples.
 - Provide synthetic protocol fixtures and simulated acquisition so most software

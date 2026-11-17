@@ -7,7 +7,8 @@ from uwave_accessory.protocol import (
     DataRequest, MeasurementMode, MeasurementPacket, StatusCode, StatusPacket, TransmitterInfo, TransmitterState,
 )
 from uwave_accessory.receiver import (
-    MalformedResponse, ReceiverClient, ResponseTimeout, StatusReported, TransmitterChanged, find_receiver,
+    MalformedResponse, ReceiverClient, ReceiverError, ResponseTimeout, StatusReported, TransmitterChanged,
+    find_receiver,
 )
 from uwave_accessory.simulation import ManualClock, SimulatedReceiver
 
@@ -146,6 +147,18 @@ def test_scan_lists_every_registered_transmitter_in_channel_order(receiver, chun
 def test_scan_of_an_empty_receiver_ends_on_end_of_search():
     receiver = SimulatedReceiver(group=7, clock=ManualClock())
     assert client_for(receiver).list_transmitters(timeout=1) == []
+
+
+def test_find_transmitter_stops_at_matching_device_id(receiver):
+    receiver.register(7, "0000000007", "7.000")
+    found = client_for(receiver).find_transmitter("0000000007", timeout=1)
+    assert found == receiver.transmitter_info(7)
+    assert [request.channel for request in receiver.requests] == [0, 4]
+
+
+def test_find_transmitter_reports_missing_device(receiver):
+    with pytest.raises(ReceiverError, match="not registered"):
+        client_for(receiver).find_transmitter("0000000999", timeout=1)
 
 
 def test_receiver_info_and_wrong_group(receiver):
