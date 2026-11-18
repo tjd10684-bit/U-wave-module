@@ -94,7 +94,7 @@ powershell -ExecutionPolicy Bypass -File .\build_module.ps1 -Python .\.venv\Scri
 ```
 
 The package is written to
-`module\build\mitutoyo-u-wave-0.1.0.zip`. In an Open ERP build containing the
+`module\build\mitutoyo-u-wave-0.1.1.zip`. In an Open ERP build containing the
 measurement-module host, choose **Settings > Measurement Devices... > Add
 Module...** and select that zip. Select **Mitutoyo U-WAVE**, choose
 **Open Setup...**, select **Simulator (demo)**, then use the existing visual
@@ -117,13 +117,23 @@ then in Open ERP choose **Settings > Measurement Devices... > Add Module...** an
 select the zip:
 
 ```powershell
-Get-FileHash .\mitutoyo-u-wave-0.1.0.zip -Algorithm SHA256   # compare with SHA256SUMS.txt
+Get-FileHash .\mitutoyo-u-wave-0.1.1.zip -Algorithm SHA256   # compare with SHA256SUMS.txt
 ```
 
 Only install modules from publishers you trust: the package is not code-signed, so
 Open ERP asks you to confirm the publisher. The simulator was tested; a physical
 receiver and transmitter have not been, so treat results as a preview and report
 what you see.
+
+### Updates
+
+Open ERP can offer a newer module version itself once the installed module declares
+`update_repository = "tjd10684-bit/U-wave-module"` in its `module.toml`. It checks this
+repository's latest release during its normal update check (and **Help > Check for
+Updates...**), always asks before downloading, and verifies the zip against that release's
+`SHA256SUMS.txt`. A build that predates the `update_repository` line, including v0.1.0, must be
+replaced by hand once. Update releases must be normal releases tagged `v<major>.<minor>.<patch>`;
+draft and pre-releases are ignored.
 
 ## On the hardware computer
 

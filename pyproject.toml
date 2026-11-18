@@ -13,11 +13,11 @@ dependencies = []
 serial = ["pyserial>=3.5"]
 module = [
     "pyserial>=3.5",
-    "open-erp-module @ git+https://github.com/tjd10684-bit/Open-ERP-Module-SDK@v1.0.0#subdirectory=python",
+    "open-erp-module @ git+https://github.com/tjd10684-bit/Open-ERP-Module-SDK@v1.1.0#subdirectory=python",
 ]
 test = [
     "pytest>=8", "pyserial>=3.5",
-    "open-erp-module @ git+https://github.com/tjd10684-bit/Open-ERP-Module-SDK@v1.0.0#subdirectory=python",
+    "open-erp-module @ git+https://github.com/tjd10684-bit/Open-ERP-Module-SDK@v1.1.0#subdirectory=python",
 ]
 
 [project.scripts]

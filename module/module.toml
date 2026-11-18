@@ -1,10 +1,11 @@
 id = "mitutoyo-u-wave"
 name = "Mitutoyo U-WAVE"
-version = "0.1.0"
+version = "0.1.1"
 publisher = "Open ERP"
 protocol = 1
 kind = "measurement"
 description = "Links Open ERP assets to Mitutoyo U-WAVE-R transmitters."
+update_repository = "tjd10684-bit/U-wave-module"
 
 [run]
 program = "mitutoyo-u-wave.exe"

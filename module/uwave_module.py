@@ -22,7 +22,7 @@ _ERROR = 1001
 class UWaveModule(Module):
     module_id = "mitutoyo-u-wave"
     name = "Mitutoyo U-WAVE"
-    version = "0.1.0"
+    version = "0.1.1"
     acquisition_mode = "latest"
 
     def __init__(self) -> None:

@@ -1,5 +1,22 @@
 # Project handoff
 
+Updated 2026-11-18: version **0.1.1** is the first build that can be updated by Open ERP itself. The
+module opts in and its releases must meet a few rules.
+
+- Opt-in is `update_repository = "tjd10684-bit/U-wave-module"` in `module/module.toml`. The shipped
+  v0.1.0 does not have the line, so testers replace it by hand once with 0.1.1; from then on the
+  module updates itself. A version bump touches `module/module.toml`, `module/uwave_module.py`
+  (`version`), the hardcoded zip name in `build_module.ps1`, the README and this file.
+- Open ERP only offers an update from the repository's **latest** release, so an update release must
+  be a normal release. A draft or **pre-release** is ignored, which is why v0.1.0 (a pre-release)
+  never triggers one. Tag it `v<major>.<minor>.<patch>` and attach `mitutoyo-u-wave-<version>.zip`
+  and `SHA256SUMS.txt`. The packaged `module.toml` must keep the same id, publisher and
+  `update_repository`, and its version must equal the tag.
+- A real end-to-end test needs two published normal releases (for example 0.1.1 installed by hand,
+  then 0.1.2 published). The packages are not code-signed; the checksum comes from the same release.
+- Contract details are in the SDK's `PROTOCOL.md` ("Automatic updates") and the Open ERP
+  `HANDOFF.md`.
+
 Updated 2026-11-18: tester release **v0.1.0** (pre-release) of the `mitutoyo-u-wave`
 module is published at
 <https://github.com/tjd10684-bit/U-wave-module/releases/tag/v0.1.0> with
@@ -16,8 +33,8 @@ Rebuilding changes the zip bytes (timestamps), so publish the exact file you has
 Updated 2026-11-18: the measurement module SDK moved from this repository's
 `sdk/` folder to its own repository,
 [Open-ERP-Module-SDK](https://github.com/tjd10684-bit/Open-ERP-Module-SDK)
-(history kept). This project installs it from the pinned `v1.0.0` tag through
-the `module` and `test` extras.
+(history kept). This project installs it from the pinned `v1.1.0` tag (since 0.1.1; earlier builds
+used `v1.0.0`) through the `module` and `test` extras.
 
 Updated 2026-11-17: the experimental U-WAVE helper module is built against the
 Open ERP contract (the module SDK above). Physical hardware remains untested.
@@ -78,7 +95,7 @@ instrument. Two-instrument correction and Bluetooth remain future work.
 - The helper re-identifies the saved transmitter by Device ID within the
   capture deadline, follows its current channel, checks the acquisition mode,
   and returns the reported units and a stable transmitter source ID.
-  `build_module.ps1` produces `module/build/mitutoyo-u-wave-0.1.0.zip`.
+  `build_module.ps1` produces `module/build/mitutoyo-u-wave-0.1.1.zip`.
   The built module passed `host_check`, Open ERP's real module-manager install,
   setup-window launch, and simulator capture checks.
   The host supplies the asset list; the module does not query the ERP database.
