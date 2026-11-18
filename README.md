@@ -107,6 +107,24 @@ The module stores its settings in Open ERP's per-user
 hardware window's `%LOCALAPPDATA%\UWaveAccessory\links.json` is separate and is not
 automatically migrated.
 
+## Download a tester build
+
+Experimental tester builds are published on this repository's
+[Releases page](https://github.com/tjd10684-bit/U-wave-module/releases) as
+`mitutoyo-u-wave-<version>.zip` with a `SHA256SUMS.txt` file. They need an Open ERP
+build that has the measurement-module host (0.2.11 or later). Check the download,
+then in Open ERP choose **Settings > Measurement Devices... > Add Module...** and
+select the zip:
+
+```powershell
+Get-FileHash .\mitutoyo-u-wave-0.1.0.zip -Algorithm SHA256   # compare with SHA256SUMS.txt
+```
+
+Only install modules from publishers you trust: the package is not code-signed, so
+Open ERP asks you to confirm the publisher. The simulator was tested; a physical
+receiver and transmitter have not been, so treat results as a preview and report
+what you see.
+
 ## On the hardware computer
 
 Start without `--demo` to inspect the actual receiver:

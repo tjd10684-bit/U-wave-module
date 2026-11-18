@@ -1,5 +1,17 @@
 # Project handoff
 
+Updated 2026-11-18: tester release **v0.1.0** (pre-release) of the `mitutoyo-u-wave`
+module is published at
+<https://github.com/tjd10684-bit/U-wave-module/releases/tag/v0.1.0> with
+`mitutoyo-u-wave-0.1.0.zip` (10,932,344 bytes, SHA256
+`c6a17bd87857b1632afbe917f48e29136f473ff2f7025506778469873ae618e0`) and `SHA256SUMS.txt`.
+It was built with `build_module.ps1` from a clean clone of commit `075e1d6` in a fresh
+virtual environment that installed the SDK from the public `v1.0.0` tag (117 tests
+passed and the SDK `host_check` passed on the frozen helper). The zip holds only
+`module.toml`, `mitutoyo-u-wave.exe` and its `_internal` runtime; a scan found no
+private paths or identities. Not tested: physical receiver/transmitter or VCP driver.
+Rebuilding changes the zip bytes (timestamps), so publish the exact file you hash.
+
 Updated 2026-11-18: the measurement module SDK moved from this repository's
 `sdk/` folder to its own repository,
 [Open-ERP-Module-SDK](https://github.com/tjd10684-bit/Open-ERP-Module-SDK)
