@@ -7,7 +7,8 @@ module is published at
 `c6a17bd87857b1632afbe917f48e29136f473ff2f7025506778469873ae618e0`) and `SHA256SUMS.txt`.
 It was built with `build_module.ps1` from a clean clone of commit `075e1d6` in a fresh
 virtual environment that installed the SDK from the public `v1.0.0` tag (117 tests
-passed and the SDK `host_check` passed on the frozen helper). The zip holds only
+passed and the SDK `host_check` passed on the frozen helper). The `v0.1.0` tag points at
+`fd53a2a`, which differs from the built commit only in README/HANDOFF text. The zip holds only
 `module.toml`, `mitutoyo-u-wave.exe` and its `_internal` runtime; a scan found no
 private paths or identities. Not tested: physical receiver/transmitter or VCP driver.
 Rebuilding changes the zip bytes (timestamps), so publish the exact file you hash.
@@ -99,10 +100,11 @@ instrument. Two-instrument correction and Bluetooth remain future work.
   updated the module while preserving links, and stopped both helpers cleanly.
   The source host also opened and closed the visual setup window. The full
   interactive packaged-host workflow remains a manual check.
-- Package: `module/build/mitutoyo-u-wave-0.1.0.zip`, 10,931,729 bytes, SHA256
-  `3367ecceac6584d27699f23d270769c0b8b456ecb002117a815c331797a7049c`.
-  The bundle contains the public module/SDK, not private ERP source.
-- Built locally; no push or publication was authorized for this release task.
+- Released package: `mitutoyo-u-wave-0.1.0.zip`, 10,932,344 bytes, SHA256
+  `c6a17bd87857b1632afbe917f48e29136f473ff2f7025506778469873ae618e0`, published
+  with the v0.1.0 release (see the top of this file). Earlier local builds differ
+  because builds are not byte-reproducible. The bundle contains the public
+  module/SDK, not private ERP source.
 
 The next task is **hardware verification**, not production inspection. No
 physical receiver or instrument was exercised by this implementation session.
