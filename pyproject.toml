@@ -11,7 +11,14 @@ dependencies = []
 
 [project.optional-dependencies]
 serial = ["pyserial>=3.5"]
-test = ["pytest>=8", "pyserial>=3.5"]
+module = [
+    "pyserial>=3.5",
+    "open-erp-module @ git+https://github.com/tjd10684-bit/Open-ERP-Module-SDK@v1.0.0#subdirectory=python",
+]
+test = [
+    "pytest>=8", "pyserial>=3.5",
+    "open-erp-module @ git+https://github.com/tjd10684-bit/Open-ERP-Module-SDK@v1.0.0#subdirectory=python",
+]
 
 [project.scripts]
 uwave-setup = "uwave_accessory.setup_window:main"
@@ -21,4 +28,4 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "sdk/python/src"]
+pythonpath = ["src"]

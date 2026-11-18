@@ -5,7 +5,8 @@ U-WAVE hardware support. It supersedes earlier proposals for simultaneous or
 two-instrument captures in this repository. Those remain future work.
 
 Separately installed measurement modules now run as helper programs under the
-contract in [`sdk/PROTOCOL.md`](sdk/PROTOCOL.md). Open ERP's module host
+contract in [the SDK's `PROTOCOL.md`](https://github.com/tjd10684-bit/Open-ERP-Module-SDK/blob/main/PROTOCOL.md).
+Open ERP's module host
 registers the provider described below on their behalf, so the operator
 workflow and the host's reading-acceptance rules here apply to module readings
 too.
@@ -80,7 +81,8 @@ own pending-request state even if the underlying I/O cannot be interrupted.
 
 This in-process hook is the host's internal seam. A separately installed module
 does not import Open ERP: it is a helper program that speaks
-[`sdk/PROTOCOL.md`](sdk/PROTOCOL.md), and Open ERP's module host adapts it to
+[the SDK's `PROTOCOL.md`](https://github.com/tjd10684-bit/Open-ERP-Module-SDK/blob/main/PROTOCOL.md),
+and Open ERP's module host adapts it to
 this hook. No driver or vendor DLL is supplied by this contract. The experimental
 U-WAVE helper wraps the accessory's protocol/discovery client and setup window;
 physical hardware behavior remains unverified.

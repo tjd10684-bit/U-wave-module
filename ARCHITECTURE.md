@@ -155,7 +155,8 @@ The legacy collector must not compete with U-WAVEPAK Data I/F for its receiver.
 - Keep vendor-specific drivers and dependencies optional.
 - The development package uses setuptools and optional pyserial. Open ERP
   installs modules as separate helper-program packages
-  ([`sdk/PROTOCOL.md`](sdk/PROTOCOL.md)); driver distribution remains a separate
+  ([the SDK's `PROTOCOL.md`](https://github.com/tjd10684-bit/Open-ERP-Module-SDK/blob/main/PROTOCOL.md));
+  driver distribution remains a separate
   decision.
 - Keep connection settings, IDs, and other site-specific information outside
   committed examples.

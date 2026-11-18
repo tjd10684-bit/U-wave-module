@@ -1,7 +1,13 @@
 # Project handoff
 
+Updated 2026-11-18: the measurement module SDK moved from this repository's
+`sdk/` folder to its own repository,
+[Open-ERP-Module-SDK](https://github.com/tjd10684-bit/Open-ERP-Module-SDK)
+(history kept). This project installs it from the pinned `v1.0.0` tag through
+the `module` and `test` extras.
+
 Updated 2026-11-17: the experimental U-WAVE helper module is built against the
-Open ERP contract ([sdk/](sdk/README.md)). Physical hardware remains untested.
+Open ERP contract (the module SDK above). Physical hardware remains untested.
 Start with [README.md](README.md), then use this document to resume without the
 original chat or workstation.
 
@@ -51,7 +57,8 @@ instrument. Two-instrument correction and Bluetooth remain future work.
   physical equipment. The demo has sample assets and uses a separate settings
   file in the user's temporary folder.
 - Open ERP installs measurement modules as separate helper programs that speak
-  [`sdk/PROTOCOL.md`](sdk/PROTOCOL.md). `module/uwave_module.py` reuses this
+  [the SDK's `PROTOCOL.md`](https://github.com/tjd10684-bit/Open-ERP-Module-SDK/blob/main/PROTOCOL.md).
+  `module/uwave_module.py` reuses this
   package's protocol, serial transport, links, simulator and setup window. The
   module offers a Simulator port and uses its host-provided data directory;
   standalone settings are separate and are not migrated automatically.
@@ -69,7 +76,9 @@ instrument. Two-instrument correction and Bluetooth remain future work.
 
 ### Local 0.1.0 build verification
 
-- All **130 tests passed** (`python -m pytest tests sdk/python/tests -q`).
+- All **130 tests passed** (`python -m pytest tests sdk/python/tests -q`) before
+  the SDK moved. Since the move, `python -m pytest tests -q` runs this
+  project's 117 tests; the SDK's 13 run in its own repository.
 - Rebuilt the module after fixing capture's setup-lock timeout and ensuring
   transport closure happens before releasing the receiver lock. SDK
   `host_check` passed against the frozen helper.

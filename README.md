@@ -7,7 +7,8 @@ workflow.
 protocol, virtual-COM transport, simulated receiver, visual asset-linking window
 and Open ERP helper package are implemented and tested against the simulator.
 They have not been validated on physical hardware. The module uses Open ERP's
-separate helper-program contract (see the [module SDK](sdk/README.md)).
+separate helper-program contract (see the
+[module SDK](https://github.com/tjd10684-bit/Open-ERP-Module-SDK), a separate repository).
 
 ## Goal
 
@@ -42,7 +43,9 @@ python -m venv .venv
 ```
 
 The base package has no third-party runtime dependencies. The `serial` extra
-adds pyserial; the `test` extra includes pytest and pyserial for loopback tests.
+adds pyserial; the `test` extra includes pytest, pyserial and the
+[Open ERP module SDK](https://github.com/tjd10684-bit/Open-ERP-Module-SDK),
+which pip installs from its pinned GitHub tag, so Git must be installed.
 The equivalent installed launcher is `.\.venv\Scripts\uwave-setup.exe --demo`.
 
 The demo needs neither the ERP nor a receiver. It uses synthetic equipment and
@@ -82,11 +85,12 @@ shop settings or real device identities.
 
 The installable helper includes the visual asset/transmitter setup and offers a
 **Simulator (demo)** port, so it can be tried without a receiver. From this
-checkout, use Python 3.12 or newer with Tkinter:
+checkout, use Python 3.12 or newer with Tkinter. The `module` extra installs
+pyserial and the pinned Open ERP module SDK (Git required):
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -e ".[serial,test]" pyinstaller
-.\build_module.ps1 -Python .\.venv\Scripts\python.exe
+.\.venv\Scripts\python.exe -m pip install -e ".[module]" pyinstaller
+powershell -ExecutionPolicy Bypass -File .\build_module.ps1 -Python .\.venv\Scripts\python.exe
 ```
 
 The package is written to
@@ -151,7 +155,7 @@ capture and guaranteed fresh/simultaneous measurements are not supported here.
 | Document | Purpose |
 | --- | --- |
 | [HOST_CONTRACT.md](HOST_CONTRACT.md) | Agreed initial host API, single-instrument scope, mapping ownership and capture safeguards |
-| [sdk/README.md](sdk/README.md) | Measurement module SDK: the helper-program protocol, Python library, `host_check` and an example module |
+| [Open-ERP-Module-SDK](https://github.com/tjd10684-bit/Open-ERP-Module-SDK) | Measurement module SDK (separate repository): the helper-program protocol, Python library, `host_check` and an example module |
 | [HANDOFF.md](HANDOFF.md) | Session context, agreed direction, evidence, unknowns, and how to resume on another machine |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Proposed host/accessory boundary and acquisition guarantees |
 | [PROTOCOL_NOTES.md](PROTOCOL_NOTES.md) | Distinct USB-receiver and Bluetooth routes, ordering, cached readings, and pedal limitations |
@@ -179,6 +183,7 @@ or copies of manufacturer manuals/software.
 
 Hardware selection, licensing and driver distribution remain open. Open ERP
 installs measurement modules as separate helper programs under
-[`sdk/PROTOCOL.md`](sdk/PROTOCOL.md); the U-WAVE helper package is experimental.
+[the SDK's `PROTOCOL.md`](https://github.com/tjd10684-bit/Open-ERP-Module-SDK/blob/main/PROTOCOL.md);
+the U-WAVE helper package is experimental.
 The contract and simulator tests do not establish working physical U-WAVE
 hardware support.
