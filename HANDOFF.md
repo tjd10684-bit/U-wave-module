@@ -1,5 +1,19 @@
 # Project handoff
 
+Updated 2026-11-18: tester release **v0.1.1** (a normal release, marked latest) is published at
+<https://github.com/tjd10684-bit/U-wave-module/releases/tag/v0.1.1> with
+`mitutoyo-u-wave-0.1.1.zip` (10,931,899 bytes, SHA256
+`2267f7e096af56b6f8c6c83213b607194725bf20933d63c89c794589d30dd0d0`) and an LF-terminated
+`SHA256SUMS.txt`. It was built with `build_module.ps1` from a clean clone of commit `10f26a6`
+(the `v0.1.1` tag) in a fresh virtual environment that installed the SDK from the public `v1.1.0`
+tag: 117 tests passed and `host_check` passed on the frozen helper. The zip holds only
+`module.toml`, `mitutoyo-u-wave.exe` and its `_internal` runtime; the only text hit for the owner's
+name is the public `update_repository` value. Verified live with Open ERP's own update code: with
+0.1.0 installed, 0.1.1 is found, downloaded, checksum-verified and accepted by `verify_package`;
+with 0.1.1 installed there is no update; the anonymous `releases/latest` API returns v0.1.1 and an
+independently downloaded zip matches the published checksum. Not tested: a real in-app update click
+(needs a later 0.1.2) or physical receiver/transmitter.
+
 Updated 2026-11-18: version **0.1.1** is the first build that can be updated by Open ERP itself. The
 module opts in and its releases must meet a few rules.
 
