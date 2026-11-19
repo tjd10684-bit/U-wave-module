@@ -14,6 +14,7 @@ from uwave_accessory.serial_transport import PortInfo, SerialTransport, Transpor
 from uwave_accessory.setup_window import (
     DEMO_PORT, PORT_LOCK, DemoInstruments, SetupWindow, available_ports, demo_receiver,
 )
+from uwave_accessory.theme import AUTO, Palette, palette_from_host
 
 logger = logging.getLogger("uwave-module")
 _ERROR = 1001
@@ -112,9 +113,20 @@ class UWaveModule(Module):
             received_at=reading.received_at,
         )
 
+    def _setup_theme(self) -> str | Palette:
+        """Open ERP's colours when it sent them with open_setup, else the mode to look up for this workstation."""
+        host = getattr(self, "host_theme", None)  # the SDK sets it from 1.2; older hosts and SDKs send none
+        if host is not None:
+            try:
+                return palette_from_host(host.mode, host.colors)
+            except ValueError:
+                logger.warning("Ignoring Open ERP's theme mode %r.", host.mode)
+        return AUTO
+
     def open_setup(self, equipment: list[Equipment]) -> None:
         if self._store is None:
             raise ModuleError("Open ERP must initialize the U-WAVE module before setup.", _ERROR)
+        theme = self._setup_theme()
         root = tk.Tk()
         root.withdraw()
         demo: DemoInstruments | None = None
@@ -143,6 +155,7 @@ class UWaveModule(Module):
                 default_port=DEMO_PORT,
                 title="Mitutoyo U-WAVE Setup",
                 on_port_selected=port_selected,
+                theme=theme,
             )
             port_selected(window.selected_port)
             window.run()

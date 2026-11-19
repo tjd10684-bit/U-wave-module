@@ -1,5 +1,16 @@
 # Project handoff
 
+Updated 2026-11-19 (after v0.2.0, not yet released): the setup window now follows
+Open ERP's light/dark look (`theme.py`). **Handshake:** the SDK's `open_setup` carries an optional
+`theme` (mode plus colours for sixteen neutral roles) that the module uses when present
+(`palette_from_host`). That SDK change is version 1.2.0 on the SDK's local branch `feat/host-theme`
+and has not been pushed or tagged; this project still pins `v1.1.0`, so a build made now only uses the
+fallback (the mode saved in Open ERP's preferences, then Open ERP's default of dark, then the Windows
+setting, then light). Before releasing the theme: push and tag the SDK `v1.2.0`, raise the pin in
+`pyproject.toml` and rebuild. The host must also send `theme` for exact colours; that is a private-host
+change handed to its own session. Once it does, remove the preferences-file fallback
+(`saved_mode` and `open_erp_config_dir`). Full suite: 164 passed. Look at both modes on the real PC.
+
 Updated 2026-11-19: tester release **v0.2.0** (a normal release, marked latest) is published at
 <https://github.com/tjd10684-bit/U-wave-module/releases/tag/v0.2.0> with
 `mitutoyo-u-wave-0.2.0.zip` (10,938,532 bytes, SHA256

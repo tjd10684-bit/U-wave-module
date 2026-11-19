@@ -74,6 +74,13 @@ transmitter identities:
 9. The demo also opens a **Demo instruments** window whose buttons change a
    simulated reading or press a simulated DATA button.
 
+The window matches Open ERP's light or dark look. When Open ERP sends its
+colors with the setup request (SDK 1.2 and an Open ERP that supports it), they
+are used exactly. Otherwise the mode comes from the choice saved in Open ERP's
+per-workstation preferences, then Open ERP's default (dark) if it has run on
+this PC, then the Windows light/dark setting, then light. Preview a mode with
+`--theme light` or `--theme dark` on the demo command; the default is `auto`.
+
 Reading values does not wake the transmitters: the receiver answers from the
 latest value it has stored. Event driven mode itself is what uses more
 transmitter battery than Button driven mode.
@@ -204,6 +211,7 @@ not implemented.
 | [serial_transport.py](src/uwave_accessory/serial_transport.py) | Optional pyserial connection, 57600 baud, 8N1, RTS/CTS |
 | [links.py](src/uwave_accessory/links.py) | Asset UUID to transmitter Device ID links, scan checks and atomic JSON storage |
 | [setup_window.py](src/uwave_accessory/setup_window.py) | Tkinter visual setup, value reading, automated identification and the demo launcher |
+| [theme.py](src/uwave_accessory/theme.py) | Light/dark palettes, the host-sent palette, mode detection and Tk/title-bar styling |
 | [simulation.py](src/uwave_accessory/simulation.py) | Synthetic receiver, simulated DATA presses and controllable test responses |
 | [module/](module/) | Open ERP helper entry point, manifest and module build output |
 | [tests](tests) | Protocol, request, loopback transport, mapping and GUI regression tests |

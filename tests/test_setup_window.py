@@ -17,7 +17,7 @@ from uwave_accessory.receiver import LatestReading
 from uwave_accessory.serial_transport import PortInfo, TransportError
 from uwave_accessory.setup_window import SetupWindow
 from uwave_accessory.simulation import SimulatedReceiver
-
+from uwave_accessory.theme import palette_from_host
 EQUIPMENT = (
     SimpleNamespace(asset_id="a1", tag="CAL-001", name="Caliper", category="Caliper"),
     SimpleNamespace(asset_id="a2", tag="MIC-002", name="Micrometer", category="Micrometer", used_by=("2", "5")),
@@ -63,7 +63,8 @@ def store(tmp_path):
 def open_window(root, receiver, store, **options):
     window = SetupWindow(
         root, EQUIPMENT, store=store, open_transport=options.pop("open_transport", lambda _port: receiver),
-        list_ports=options.pop("list_ports", lambda: [PortInfo("SIM", "simulator")]), default_port="SIM", **options,
+        list_ports=options.pop("list_ports", lambda: [PortInfo("SIM", "simulator")]), default_port="SIM",
+        theme=options.pop("theme", "light"), **options,  # not "auto": that would read this PC's Open ERP choice
     )
     wait_for(root, lambda: not window.scanning and window._startup_id is None)
     return window
@@ -110,6 +111,38 @@ def test_scan_lists_transmitters_left_and_each_asset_once_right(root, receiver, 
     assert window._ports[TX1][0] < window._ports[("asset", "a1")][0]
     assert "Used by 2, 5" in window._asset_text(window.assets[1])[1]
     assert "group 07 (detected)" in window.status_var.get()
+    window.destroy()
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_window_is_dressed_in_the_palette_of_its_mode(root, receiver, store, mode):
+    window = open_window(root, receiver, store, theme=mode)
+    palette = setup_window.PALETTES[mode]
+
+    assert window.palette is palette
+    assert window.cget("background") == palette.bg
+    assert window.canvas.cget("background") == palette.canvas_bg
+    assert window.canvas.itemcget(window._card_rects[TX1][0], "fill") == palette.card_fill
+    window.destroy()
+
+
+def test_window_uses_the_palette_the_host_sent(root, receiver, store):
+    palette = palette_from_host("dark", {"background": "#101010", "field": "#181818"})
+    window = open_window(root, receiver, store, theme=palette)
+
+    assert window.palette is palette
+    assert window.canvas.cget("background") == "#101010"
+    assert window.canvas.itemcget(window._card_rects[TX1][0], "fill") == "#181818"
+    window.destroy()
+
+
+def test_auto_follows_the_mode_open_erp_saved_on_this_workstation(root, receiver, store, tmp_path, monkeypatch):
+    (tmp_path / "Open ERP").mkdir()
+    (tmp_path / "Open ERP" / "preferences.json").write_text('{"theme": "dark"}', encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    window = open_window(root, receiver, store, theme="auto")
+
+    assert window.palette.mode == "dark"
     window.destroy()
 
 
@@ -271,7 +304,7 @@ def test_read_values_shows_what_changed_since_the_last_click(root, receiver, sto
     tx1, tx2, tx3 = window.transmitters
     assert window._value_text(tx1) == ("1.000 mm", setup_window.TEXT)
     assert window._value_text(tx2) is None  # Button driven: the receiver keeps no value
-    assert window._value_text(tx3) == ("No data yet", setup_window.AMBER)
+    assert window._value_text(tx3) == ("No data yet", setup_window.CAUTION)
     assert window.live_var.get().startswith("Values read at")
     assert "Unavailable" not in window.live_var.get()  # "no data yet" is a state, not a failure
     assert window.link("0000100001", "a1")
@@ -285,9 +318,9 @@ def test_read_values_shows_what_changed_since_the_last_click(root, receiver, sto
     assert window.live_var.get() == (
         "Changed since the last read: CH 01 (CAL-001) 1.000 mm → 1.250 mm; CH 03 No data yet → 3.000 mm"
     )
-    assert window._value_text(tx1) == ("1.250 mm", setup_window.BLUE)
-    assert card_fill(window, TX1) == card_fill(window, ("asset", "a1")) == setup_window.MOVED_FILL
-    assert card_fill(window, TX2) == card_fill(window, ("asset", "a2")) == setup_window.CARD_FILL
+    assert window._value_text(tx1) == ("1.250 mm", setup_window.ACCENT)
+    assert card_fill(window, TX1) == card_fill(window, ("asset", "a1")) == window.palette.moved_fill
+    assert card_fill(window, TX2) == card_fill(window, ("asset", "a2")) == window.palette.card_fill
 
     requests = len(receiver.requests)
     time.sleep(0.2)
@@ -295,7 +328,7 @@ def test_read_values_shows_what_changed_since_the_last_click(root, receiver, sto
     assert len(receiver.requests) == requests  # values are read only when asked
     window.read_values()
     wait_for(root, lambda: not window._reading)
-    assert window._moved == set() and card_fill(window, TX1) == setup_window.CARD_FILL
+    assert window._moved == set() and card_fill(window, TX1) == window.palette.card_fill
     assert window.live_var.get().startswith("No values changed since the last read")
     assert {request.channel for request in receiver.requests if isinstance(request, DataRequest)} == {1, 3}
     window.destroy()
@@ -369,12 +402,12 @@ def test_link_all_identifies_each_unlinked_asset_in_turn(root, receiver, store):
     wait_for(root, lambda: window._identify.deadline is not None)
     assert window.identify_var.get().startswith("Identify CAL-001 (1 of 2):")
     assert window.skip_button.winfo_manager() == "pack"
-    assert window._selected is None and window._card_rects[("asset", "a1")][1:] == (setup_window.BLUE, 3)
+    assert window._selected is None and window._card_rects[("asset", "a1")][1:] == (window.palette.accent, 3)
 
     receiver.press_data(2)
     wait_for(root, lambda: window._identify.index == 1)
     assert window.live_var.get() == "Linked CAL-001 to CH 02."
-    assert window._value_text(window.transmitters[1]) == ("2.000 mm", setup_window.BLUE)
+    assert window._value_text(window.transmitters[1]) == ("2.000 mm", setup_window.ACCENT)
 
     wait_for(root, lambda: window._identify.deadline is not None)  # MIC-002's starting values are in
     assert window.identify_var.get().startswith("Identify MIC-002 (2 of 2): change")
@@ -598,7 +631,7 @@ def test_failed_receiver_does_not_hide_healthy_receiver_or_reuse_stale_values(ro
     assert "SIM unplugged" in window.status_var.get()
     assert window.settings.links["a1"].port == "SIM"
     assert window._asset_text(window.assets[0])[2:4] == (
-        "SIM · CH 01 · Not checked: receiver scan failed", setup_window.GRAY,
+        "SIM · CH 01 · Not checked: receiver scan failed", setup_window.NEUTRAL,
     )
     assert str(window.read_button["state"]) == "normal"
     assert str(window.identify_button["state"]) == "disabled"
@@ -613,7 +646,7 @@ def test_duplicate_device_ids_across_receivers_are_not_silently_routed(root, rec
     assert window.transmitters == []
     assert "registered on multiple receivers" in window.status_var.get()
     assert window._asset_text(window.assets[0])[2:4] == (
-        "SIM · CH 01 · Registered on several receivers", setup_window.RED,
+        "SIM · CH 01 · Registered on several receivers", setup_window.ERROR,
     )
     assert not window.link("0000100001", "a1")
     assert not any(isinstance(item, DataRequest) for item in receiver.requests)
@@ -623,7 +656,9 @@ def test_duplicate_device_ids_across_receivers_are_not_silently_routed(root, rec
 def test_link_on_a_receiver_not_in_use_is_unchecked_rather_than_missing(root, receiver, store):
     store.save(AccessoryConfig({"SIM": None}, {"a1": Link("a1", "CAL-001", "0000900001", 1, 7, "USB")}))
     window = open_window(root, receiver, store)
-    assert window._asset_text(window.assets[0])[2:4] == ("CH 01 · Not checked: USB not in use", setup_window.GRAY)
+    assert window._asset_text(window.assets[0])[2:4] == (
+        "CH 01 · Not checked: USB not in use", setup_window.NEUTRAL,
+    )
     click(window, point(window, ("tx", "0000900001")))
     assert "Receiver USB is not in use" in window.hint_var.get()
     assert window.settings.links["a1"].port == "USB"

@@ -14,7 +14,8 @@ Values come from the receiver's memory, so reading them does not wake the
 transmitters.
 
 configure(parent, equipment) matches the host contract's configure callback.
-Try it without hardware: python -m uwave_accessory.setup_window --demo
+The window follows Open ERP's light or dark mode (see theme.py).
+Try it without hardware: python -m uwave_accessory.setup_window --demo [--theme light|dark]
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ from .receiver import (
     find_receiver,
 )
 from .serial_transport import PortInfo, SerialTransport, TransportError, list_ports
+from .theme import ACCENT, AUTO, CAUTION, ERROR, NEUTRAL, PALETTES, READY, TEXT, Palette, apply, detect_mode
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +55,6 @@ IDENTIFY_INTERVAL = 1.0  # seconds between value requests while identifying
 DEMO_PORT = "Simulator"
 
 CARD_HEIGHT, CARD_GAP, MARGIN, HEADER, MIN_CANVAS_WIDTH = 64, 12, 24, 44, 720
-GREEN, AMBER, RED, GRAY, BLUE = "#2e7d32", "#e65100", "#c62828", "#757575", "#1565c0"
-CANVAS_BG, CARD_FILL, GHOST_FILL, MOVED_FILL, CARD_OUTLINE, TEXT, MUTED, PROMPT_BG = (
-    "#f4f6f8", "#ffffff", "#eceff1", "#fff3c4", "#b0bec5", "#212121", "#546e7a", "#e3f2fd",
-)
 
 # Windows opens a COM port exclusively, so scans, value reads, captures and identification,
 # including those of a window that is closing, take turns.
@@ -78,13 +76,13 @@ DEFAULT_HINT = (
 )
 
 _STATE_STYLE = {
-    LinkState.READY: ("Ready", GREEN),
-    LinkState.MOVED: ("Ready (channel changed)", GREEN),
-    LinkState.DISCONNECTED: ("Transmitter not connected", AMBER),
-    LinkState.BUTTON_DRIVEN: ("Set Event driven in U-WAVEPAK", AMBER),
-    LinkState.EDITING: ("Being edited in U-WAVEPAK", AMBER),
-    LinkState.NOT_FOUND: ("Transmitter not found", RED),
-    LinkState.NOT_SCANNED: ("Not checked: scan the receiver", GRAY),
+    LinkState.READY: ("Ready", READY),
+    LinkState.MOVED: ("Ready (channel changed)", READY),
+    LinkState.DISCONNECTED: ("Transmitter not connected", CAUTION),
+    LinkState.BUTTON_DRIVEN: ("Set Event driven in U-WAVEPAK", CAUTION),
+    LinkState.EDITING: ("Being edited in U-WAVEPAK", CAUTION),
+    LinkState.NOT_FOUND: ("Transmitter not found", ERROR),
+    LinkState.NOT_SCANNED: ("Not checked: scan the receiver", NEUTRAL),
 }
 _EDITING = (TransmitterState.EDITING, TransmitterState.EDITING_SOURCE, TransmitterState.EDITING_DESTINATION)
 
@@ -273,8 +271,11 @@ class SetupWindow(tk.Toplevel):
         identify_seconds: float = IDENTIFY_SECONDS,
         identify_interval: float = IDENTIFY_INTERVAL,
         on_port_selected: Callable[[str | None], None] | None = None,
+        theme: str | Palette = AUTO,
     ):
         super().__init__(parent)
+        self.palette: Palette = theme if isinstance(theme, Palette) else PALETTES[detect_mode(theme)]
+        apply(self, self.palette)
         self.title(title)
         self.store = store or ConfigStore()
         self.open_transport = open_transport
@@ -396,8 +397,8 @@ class SetupWindow(tk.Toplevel):
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
         self.canvas = tk.Canvas(
-            body, background=CANVAS_BG, highlightthickness=1, highlightbackground=CARD_OUTLINE,
-            yscrollincrement=20,
+            body, background=self.palette.canvas_bg, highlightthickness=1,
+            highlightbackground=self.palette.border, yscrollincrement=20,
         )
         self.canvas.grid(row=0, column=0, sticky="nsew")
         scroll = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
@@ -411,14 +412,14 @@ class SetupWindow(tk.Toplevel):
 
     def _build_identify_bar(self) -> None:
         """The prompt shown while identifying; hidden otherwise."""
-        bar = tk.Frame(self, background=PROMPT_BG, padx=12, pady=8, highlightthickness=1,
-                       highlightbackground=BLUE)
+        bar = tk.Frame(self, background=self.palette.prompt_bg, padx=12, pady=8, highlightthickness=1,
+                       highlightbackground=self.palette.accent)
         ttk.Button(bar, text="Stop", command=self.stop_identify).pack(side="right")
         self.skip_button = ttk.Button(bar, text="Skip", command=self.skip_identify)
         self.identify_var = tk.StringVar(self)
         self.identify_label = tk.Label(
-            bar, textvariable=self.identify_var, background=PROMPT_BG, foreground=TEXT, font=self._bold,
-            anchor="w", justify="left",
+            bar, textvariable=self.identify_var, background=self.palette.prompt_bg, foreground=self.palette.text,
+            font=self._bold, anchor="w", justify="left",
         )
         self.identify_label.pack(side="left", fill="x", expand=True)
         bar.bind("<Configure>", lambda event: self.identify_label.configure(wraplength=max(event.width - 220, 200)))
@@ -430,13 +431,15 @@ class SetupWindow(tk.Toplevel):
         info = ttk.Frame(self, padding=(12, 6, 12, 0))
         info.grid(row=3, column=0, sticky="ew")
         self.live_var = tk.StringVar(self)
-        self.live_label = ttk.Label(info, textvariable=self.live_var, wraplength=940, foreground=BLUE)
+        self.live_label = ttk.Label(
+            info, textvariable=self.live_var, wraplength=940, foreground=self.palette.accent,
+        )
         self.live_label.pack(anchor="w", pady=(0, 2))
         self.hint_var = tk.StringVar(self)
         self.hint_label = ttk.Label(info, textvariable=self.hint_var, wraplength=940)
         self.hint_label.pack(anchor="w")
         self.status_var = tk.StringVar(self)
-        self.status_label = ttk.Label(info, textvariable=self.status_var, wraplength=940, foreground=MUTED)
+        self.status_label = ttk.Label(info, textvariable=self.status_var, wraplength=940, foreground=self.palette.muted)
         self.status_label.pack(anchor="w", pady=(2, 0))
         buttons = ttk.Frame(self, padding=12)
         buttons.grid(row=4, column=0, sticky="ew")
@@ -1013,7 +1016,7 @@ class SetupWindow(tk.Toplevel):
     def _check(self, link: Link) -> tuple[LinkCheck, tuple[str, str] | None]:
         """Judge a link against its own receiver's scan.
 
-        Also returns a (label, colour) where the generic one for the state would mislead: a link whose
+        Also returns a (label, colour role) where the generic one for the state would mislead: a link whose
         receiver failed to scan or is not in use was not checked, rather than not found.
         """
         check = check_link(link, self.transmitters)
@@ -1024,19 +1027,19 @@ class SetupWindow(tk.Toplevel):
             return LinkCheck(
                 LinkState.NOT_FOUND, f"Transmitter {link.device_id} is registered on several receivers "
                 f"({', '.join(ports)}); register it on only one of them and rescan.",
-            ), ("Registered on several receivers", RED)
+            ), ("Registered on several receivers", ERROR)
         port = self.settings.port_for_link(link)
         if port is not None and port not in self.settings.receivers:
             return LinkCheck(
                 LinkState.NOT_SCANNED, f"Receiver {port} is not in use, so this link was not checked and cannot "
                 f"capture. Select {port} and check Use this receiver to use it.",
-            ), (f"Not checked: {port} not in use", GRAY)
+            ), (f"Not checked: {port} not in use", NEUTRAL)
         failed = [item for item in self.settings.receivers if item not in self.scans]
         if failed and (port is None or port in failed):
             return LinkCheck(
                 LinkState.NOT_SCANNED, f"Receiver {port or _join(failed)} could not be scanned, so this link was "
                 "not checked. Fix the receiver and click Scan Receivers.",
-            ), ("Not checked: receiver scan failed", GRAY)
+            ), ("Not checked: receiver scan failed", NEUTRAL)
         return check, None
 
     def link(self, device_id: str, asset_id: str) -> bool:
@@ -1183,6 +1186,7 @@ class SetupWindow(tk.Toplevel):
 
     def redraw(self) -> None:
         canvas = self.canvas
+        palette = self.palette
         canvas.delete("all")
         self._hit.clear()
         self._card_rects.clear()
@@ -1191,9 +1195,10 @@ class SetupWindow(tk.Toplevel):
         card_width = min(330, int((width - 2 * MARGIN) * 0.38))
         left, right = MARGIN, width - MARGIN - card_width
         visible = self._visible_assets()
-        canvas.create_text(left, 14, anchor="nw", text="U-WAVE transmitters", font=self._heading, fill=TEXT)
+        canvas.create_text(left, 14, anchor="nw", text="U-WAVE transmitters", font=self._heading, fill=palette.text)
         canvas.create_text(
-            right, 14, anchor="nw", text=f"Assets from the ERP ({len(visible)})", font=self._heading, fill=TEXT,
+            right, 14, anchor="nw", text=f"Assets from the ERP ({len(visible)})", font=self._heading,
+            fill=palette.text,
         )
 
         y_left = HEADER
@@ -1203,7 +1208,9 @@ class SetupWindow(tk.Toplevel):
                 "Enable receiver ports and scan to list their transmitters." if self.transmitters is None
                 else "No usable transmitters found. Check the scan status and registrations in U-WAVEPAK."
             )
-            canvas.create_text(left, y_left, anchor="nw", width=card_width, text=empty, fill=MUTED, font=self._font)
+            canvas.create_text(
+                left, y_left, anchor="nw", width=card_width, text=empty, fill=palette.muted, font=self._font,
+            )
         for key, info, link in rows:
             self._draw_card(
                 key, left, y_left, card_width, *self._transmitter_text(info, link, visible),
@@ -1217,7 +1224,9 @@ class SetupWindow(tk.Toplevel):
                 "No assets match the filter." if self.assets
                 else "The ERP passed no assets. Assign equipment to the part first."
             )
-            canvas.create_text(right, y_right, anchor="nw", width=card_width, text=empty, fill=MUTED, font=self._font)
+            canvas.create_text(
+                right, y_right, anchor="nw", width=card_width, text=empty, fill=palette.muted, font=self._font,
+            )
         target = self._identify.target if self._identify is not None and self._identify.deadline is not None else None
         for asset in visible:
             link = self.settings.links.get(asset.asset_id)
@@ -1239,7 +1248,8 @@ class SetupWindow(tk.Toplevel):
             options = {"dash": (6, 4)} if check.state in (LinkState.NOT_FOUND, LinkState.NOT_SCANNED) else {}
             line = canvas.create_line(
                 x1, y1, middle, y1, middle, y2, x2, y2, smooth=True, splinesteps=24,
-                width=6 if selected else 3, fill=(style or _STATE_STYLE[check.state])[1], capstyle="round", **options,
+                width=6 if selected else 3, fill=palette.color((style or _STATE_STYLE[check.state])[1]),
+                capstyle="round", **options,
             )
             canvas.tag_lower(line)
             self._hit[line] = ("link", asset.asset_id)
@@ -1269,7 +1279,7 @@ class SetupWindow(tk.Toplevel):
         if info is None:
             channel = "--" if ghost_link.channel is None else f"{ghost_link.channel:02d}"
             status = self._check(ghost_link)[1] or (
-                ("Not scanned yet", GRAY) if self.transmitters is None else ("Not found in scanned receivers", RED)
+                ("Not scanned yet", NEUTRAL) if self.transmitters is None else ("Not found in scanned receivers", ERROR)
             )
             port = f" ({ghost_link.port})" if ghost_link.port else ""
             return f"ID {ghost_link.device_id}", f"Linked to {ghost_link.asset_label}{port} · last CH {channel}", *status, True
@@ -1283,38 +1293,38 @@ class SetupWindow(tk.Toplevel):
         if len(self.settings.receivers) > 1:
             linked = f"{self._device_ports[info.device_id]} · {linked}"
         if info.state == TransmitterState.CONNECTED and info.mode == MeasurementMode.EVENT_DRIVEN:
-            status = ("Connected · Event driven", GREEN)
+            status = ("Connected · Event driven", READY)
         elif info.state == TransmitterState.CONNECTED:
-            status = ("Connected · Button driven: set Event driven", AMBER)
+            status = ("Connected · Button driven: set Event driven", CAUTION)
         elif info.state == TransmitterState.DISCONNECTED:
-            status = ("Registered · not connected", GRAY)
+            status = ("Registered · not connected", NEUTRAL)
         elif info.state in _EDITING:
-            status = ("Being edited in U-WAVEPAK", AMBER)
+            status = ("Being edited in U-WAVEPAK", CAUTION)
         else:
-            status = ("Not registered", RED)
+            status = ("Not registered", ERROR)
         return f"CH {info.channel:02d}    ID {info.device_id}", linked, *status, False
 
     def _value_text(self, info: TransmitterInfo | None) -> tuple[str, str] | None:
-        """The value to show and its colour, or None where there is none to show."""
+        """The value to show and the colour role to show it in, or None where there is none to show."""
         if info is None or info.state != TransmitterState.CONNECTED:
             return None
         moved = info.device_id in self._moved
         if info.mode == MeasurementMode.BUTTON_DRIVEN:  # the value of the latest DATA press, if one was seen
             pressed = self.pressed.get(info.device_id)
-            return (_format_value(pressed.packet), BLUE if moved else TEXT) if pressed else None
+            return (_format_value(pressed.packet), ACCENT if moved else TEXT) if pressed else None
         result = self.readings.get(info.device_id)
         if result is None:
             return None
         if isinstance(result, LatestReading):
-            return _format_value(result.packet), BLUE if moved else TEXT
-        return _reading_problem(result), AMBER
+            return _format_value(result.packet), ACCENT if moved else TEXT
+        return _reading_problem(result), CAUTION
 
     def _asset_text(self, asset: Asset):
         used_by = f"Used by {', '.join(asset.used_by)}" if asset.used_by else ""
         subtitle = " · ".join(part for part in (asset.name, asset.category, used_by) if part)
         link = self.settings.links.get(asset.asset_id)
         if link is None:
-            return asset.tag or asset.asset_id, subtitle, "Not linked", GRAY, False
+            return asset.tag or asset.asset_id, subtitle, "Not linked", NEUTRAL, False
         check, style = self._check(link)
         label, color = style or _STATE_STYLE[check.state]
         channel = check.transmitter.channel if check.transmitter else link.channel
@@ -1329,35 +1339,38 @@ class SetupWindow(tk.Toplevel):
         value: tuple[str, str] | None = None, highlight: bool = False, outlined: bool = False,
     ) -> None:
         canvas = self.canvas
+        palette = self.palette
         selected = self._selected == key
-        outline, line_width = (BLUE, 3) if selected or outlined else (CARD_OUTLINE, 1)
+        color = palette.color(color)
+        outline, line_width = (palette.accent, 3) if selected or outlined else (palette.border, 1)
         rect = canvas.create_rectangle(
-            x, y, x + width, y + CARD_HEIGHT, fill=MOVED_FILL if highlight else GHOST_FILL if ghost else CARD_FILL,
+            x, y, x + width, y + CARD_HEIGHT,
+            fill=palette.moved_fill if highlight else palette.ghost_fill if ghost else palette.card_fill,
             outline=outline, width=line_width, **({"dash": (4, 3)} if ghost else {}),
         )
         text_width = title_width = width - 30
         items = [rect]
         if value is not None:
-            value_text, value_color = value
+            value_text, value_role = value
             value_width = min(self._value.measure(value_text), text_width // 2)
             items.append(canvas.create_text(
                 x + width - 16, y + 6, anchor="ne", text=_fit(value_text, self._value, value_width),
-                font=self._value, fill=value_color,
+                font=self._value, fill=palette.color(value_role),
             ))
             title_width -= value_width + 12
         items += [
             canvas.create_text(x + 12, y + 8, anchor="nw", text=_fit(title, self._bold, title_width),
-                               font=self._bold, fill=TEXT),
+                               font=self._bold, fill=palette.text),
             canvas.create_text(x + 12, y + 26, anchor="nw", text=_fit(subtitle, self._font, text_width),
-                               font=self._font, fill=MUTED),
+                               font=self._font, fill=palette.muted),
             canvas.create_oval(x + 12, y + 48, x + 20, y + 56, fill=color, outline=""),
             canvas.create_text(x + 26, y + 44, anchor="nw", text=_fit(status, self._font, text_width - 14),
                                font=self._font, fill=color),
         ]
         port_x, port_y = (x + width if key[0] == "tx" else x), y + CARD_HEIGHT / 2
         items.append(canvas.create_oval(
-            port_x - 6, port_y - 6, port_x + 6, port_y + 6, fill=CARD_FILL, outline=BLUE if selected else MUTED,
-            width=2,
+            port_x - 6, port_y - 6, port_x + 6, port_y + 6, fill=palette.card_fill,
+            outline=palette.accent if selected else palette.muted, width=2,
         ))
         for item in items:
             self._hit[item] = key
@@ -1395,7 +1408,9 @@ class SetupWindow(tk.Toplevel):
         if port_x is None:
             return
         if drag["line"] is None:
-            drag["line"] = self.canvas.create_line(port_x, port_y, x, y, fill=BLUE, width=2, dash=(6, 4))
+            drag["line"] = self.canvas.create_line(
+                port_x, port_y, x, y, fill=self.palette.accent, width=2, dash=(6, 4),
+            )
         else:
             self.canvas.coords(drag["line"], port_x, port_y, x, y)
         target = self._item_at(x, y, ("asset",) if drag["key"][0] == "tx" else ("tx",))
@@ -1426,7 +1441,7 @@ class SetupWindow(tk.Toplevel):
     def _highlight(self, key, on: bool) -> None:
         if key in self._card_rects:
             rect, outline, line_width = self._card_rects[key]
-            self.canvas.itemconfigure(rect, outline=BLUE if on else outline, width=3 if on else line_width)
+            self.canvas.itemconfigure(rect, outline=self.palette.accent if on else outline, width=3 if on else line_width)
 
     def _link_keys(self, first, second) -> None:
         transmitter, asset = (first, second) if first[0] == "tx" else (second, first)
@@ -1442,15 +1457,17 @@ class SetupWindow(tk.Toplevel):
 
     def _set_hint(self, text: str, *, warning: bool = False) -> None:
         self.hint_var.set(text)
-        self.hint_label.configure(foreground=AMBER if warning else TEXT)
+        self.hint_label.configure(foreground=self.palette.caution if warning else self.palette.text)
 
     def _set_status(self, text: str, *, error: bool = False) -> None:
         self.status_var.set(text)
-        self.status_label.configure(foreground=RED if error else MUTED)
+        self.status_label.configure(foreground=self.palette.error if error else self.palette.muted)
 
     def _set_live(self, text: str, *, error: bool = False, warning: bool = False) -> None:
         self.live_var.set(text)
-        self.live_label.configure(foreground=RED if error else AMBER if warning else BLUE)
+        self.live_label.configure(
+            foreground=self.palette.error if error else self.palette.caution if warning else self.palette.accent,
+        )
 
 
 def _event_channels(transmitters: Iterable[TransmitterInfo]) -> dict[str, int]:
@@ -1539,8 +1556,12 @@ class DemoInstruments(tk.Toplevel):
     A child of the setup window, so the setup window's grab still lets it be clicked.
     """
 
-    def __init__(self, parent: tk.Misc, receiver):
+    def __init__(self, parent: tk.Misc, receiver, theme: str | Palette = AUTO):
         super().__init__(parent)
+        palette = getattr(parent, "palette", None) or (
+            theme if isinstance(theme, Palette) else PALETTES[detect_mode(theme)]
+        )
+        apply(self, palette)
         self.title("Demo instruments")
         self.resizable(False, False)
         self.transient(parent)
@@ -1553,7 +1574,7 @@ class DemoInstruments(tk.Toplevel):
         ttk.Label(frame, text="Simulated instruments", font="TkHeadingFont").grid(
             row=0, column=0, columnspan=3, sticky="w",
         )
-        ttk.Label(frame, text="Try Read Values or Identify, then use these.", foreground=MUTED).grid(
+        ttk.Label(frame, text="Try Read Values or Identify, then use these.", foreground=palette.muted).grid(
             row=1, column=0, columnspan=3, sticky="w", pady=(0, 8),
         )
         for row, (channel, transmitter) in enumerate(sorted(receiver.transmitters.items()), start=2):
@@ -1561,7 +1582,7 @@ class DemoInstruments(tk.Toplevel):
             self._values[channel] = tk.StringVar(self)
             ttk.Label(frame, textvariable=self._values[channel], width=16).grid(row=row, column=1, padx=8)
             if not transmitter.connected:
-                ttk.Label(frame, text="Not connected", foreground=MUTED).grid(row=row, column=2, sticky="w")
+                ttk.Label(frame, text="Not connected", foreground=palette.muted).grid(row=row, column=2, sticky="w")
             elif transmitter.mode == MeasurementMode.EVENT_DRIVEN:
                 ttk.Button(frame, text="Change reading", command=lambda c=channel: self.change(c)).grid(
                     row=row, column=2, sticky="ew",
@@ -1597,6 +1618,10 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Link ERP assets to U-WAVE transmitters.")
     parser.add_argument("--demo", action="store_true", help="use a simulated receiver and sample assets")
     parser.add_argument("--settings", type=Path, help="links file (default: per-user app data; demo: temp folder)")
+    parser.add_argument(
+        "--theme", choices=(AUTO, "light", "dark"), default=AUTO,
+        help="colour mode (default: follow Open ERP, else Windows)",
+    )
     args = parser.parse_args(argv)
     root = tk.Tk()
     root.withdraw()
@@ -1608,11 +1633,11 @@ def main(argv: list[str] | None = None) -> None:
                 store=ConfigStore(args.settings or Path(tempfile.gettempdir()) / "uwave-accessory-demo.json"),
                 open_transport=lambda _port: receiver,
                 list_ports=lambda: [PortInfo(DEMO_PORT, "simulated U-WAVE-R")],
-                default_port=DEMO_PORT, title=f"{TITLE} (demo)",
+                default_port=DEMO_PORT, title=f"{TITLE} (demo)", theme=args.theme,
             )
             DemoInstruments(window, receiver)
         else:
-            window = SetupWindow(root, (), store=ConfigStore(args.settings))
+            window = SetupWindow(root, (), store=ConfigStore(args.settings), theme=args.theme)
         window.run()
     finally:
         root.destroy()

@@ -26,6 +26,13 @@ own receiver, so a link on a port that failed to scan or is not in use is shown
 as not checked rather than not found. Device IDs found on multiple ports are
 flagged as ambiguous, not silently assigned.
 
+The window is drawn from one `Palette` (`theme.py`) of colour roles, so every
+state colour is a role resolved at draw time. The host's open_setup request may
+carry Open ERP's colours (`Module.host_theme` in SDK 1.2); `palette_from_host`
+takes those it sent and this module's own values for any missing role, and the
+link canvas follows the window's surfaces. With no host theme the mode is looked
+up on the workstation. The theme is cosmetic and never fails setup.
+
 To help the operator tell instruments apart, Read Values requests each Event
 driven transmitter's latest value once per click across enabled ports,
 sequentially opening and closing each port. Identify and Link All use only the

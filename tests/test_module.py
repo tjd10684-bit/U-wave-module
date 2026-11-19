@@ -1,14 +1,16 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
-from open_erp_module import CaptureRequest, Context, ModuleError
+from open_erp_module import CaptureRequest, Context, Module, ModuleError
 from uwave_accessory.links import AccessoryConfig, ConfigStore, Link
 from uwave_accessory.protocol import MeasurementMode
 from uwave_accessory.setup_window import DEMO_PORT, PORT_LOCK
 from uwave_accessory.serial_transport import TransportError
 from uwave_accessory.simulation import SimulatedReceiver
+from uwave_accessory.theme import PALETTES, Palette
 from module.uwave_module import UWaveModule
 
 
@@ -133,6 +135,33 @@ def test_simulator_port_remains_available_without_serial_driver(monkeypatch):
     assert module_file.UWaveModule._list_ports() == [
         module_file.PortInfo(DEMO_PORT, "Simulator (demo)"),
     ]
+
+
+def test_setup_theme_is_the_hosts_colours_when_it_sent_them():
+    module = UWaveModule()
+    module.host_theme = SimpleNamespace(mode="dark", colors={"background": "#101010", "accent": "#abcdef"})
+
+    palette = module._setup_theme()
+
+    assert isinstance(palette, Palette)
+    assert (palette.mode, palette.bg, palette.accent) == ("dark", "#101010", "#abcdef")
+    assert palette.text == PALETTES["dark"].text
+
+
+@pytest.mark.parametrize("host_theme", [None, SimpleNamespace(mode="sepia", colors={})])
+def test_setup_theme_looks_up_the_workstations_mode_without_a_usable_host_theme(host_theme):
+    module = UWaveModule()
+    module.host_theme = host_theme
+
+    assert module._setup_theme() == "auto"
+
+
+def test_setup_theme_works_with_an_sdk_that_has_no_host_theme(monkeypatch):
+    monkeypatch.delattr(Module, "host_theme", raising=False)  # SDK 1.1 and older do not have it
+    module = UWaveModule()
+
+    assert not hasattr(module, "host_theme")
+    assert module._setup_theme() == "auto"
 
 
 def test_capture_routes_each_asset_to_its_port_despite_shared_group_and_channel(tmp_path, monkeypatch):

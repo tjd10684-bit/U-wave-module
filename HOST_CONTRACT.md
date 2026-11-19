@@ -93,6 +93,12 @@ U-WAVE helper wraps the accessory's protocol/discovery client and setup window;
 limited hardware evidence is recorded in [VALIDATION_PLAN.md](VALIDATION_PLAN.md),
 without establishing physical freshness or general reconnection guarantees.
 
+Setup may match the host's look: the optional `theme` in the `open_setup`
+request (mode plus colours for sixteen neutral roles, defined in the SDK's
+`PROTOCOL.md`) is used when present and ignored when not, so no host change is
+needed for setup to work. Without it the setup window follows the workstation's
+saved Open ERP light/dark choice.
+
 ## Capture request
 
 The host constructs a `CaptureRequest`:

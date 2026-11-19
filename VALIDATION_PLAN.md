@@ -83,6 +83,7 @@ not needed by the initial integration.
 | [Links](tests/test_links.py) | One-to-one mapping, Device ID rather than channel identity, schema 1 migration, multi-receiver persistence, unresolved-route refusal and invalid-file rejection |
 | [Module capture](tests/test_module.py) | Selected-asset routing when ports share group/channel, unavailable unrelated receiver, wrong transmitter refusal, disabled/unresolved receiver errors and existing capture safeguards |
 | [Setup GUI](tests/test_setup_window.py) | Left/right asset layout, deduplication, optional balloon labels, drag/click linking, unlinking, missing-source cards, save/discard, failed rescans and closing while scanning; Read Values change reporting; Identify and Link All by simulated reading change or DATA press, ambiguous or linked-elsewhere responders, answers queued before an asset was asked for, Skip, hand links, timeouts and closing mid-identify |
+| [Look and feel](tests/test_theme.py) | Every text colour at least 4.5:1 on every surface in light and dark; mode choice (explicit, saved Open ERP preference with or without a byte order mark, Open ERP's default, Windows, light); the host's colours reproduce the built-in palette, missing or malformed colours fall back; windows open in both modes, with a host palette and with `auto`; the module passes the host theme and tolerates an SDK without one |
 
 Multi-receiver GUI cases also cover enabling/reading both ports, saving routes,
 partial failure without stale successful values, duplicate Device IDs across
@@ -129,6 +130,9 @@ The simulator assumes inclusive IR searches; it cannot prove that behavior.
   sends anything. Check noisy or drifting instruments (no change threshold is
   applied) and that the port, held for the whole session, is released on Stop
   and on closing the window.
+- Look and feel: open setup with Open ERP in light and in dark mode and compare
+  fonts, field and button colours and the title bar. Until the host sends its
+  theme, switch Open ERP's mode, reopen setup and confirm the window follows it.
 - Do not use the low-level client's buffer drain as proof of late-response
   isolation. Establish and test a safe correlation/recovery strategy before
   connecting captures to real inspection records.
