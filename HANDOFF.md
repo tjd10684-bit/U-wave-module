@@ -1,8 +1,21 @@
 # Project handoff
 
-Updated 2026-11-19: **0.2.0 is prepared for release** from `main` as a normal
-release; the published record is added above this entry. Before release, a code
-review of the multiple-receiver change led to two setup-window fixes: links are
+Updated 2026-11-19: tester release **v0.2.0** (a normal release, marked latest) is published at
+<https://github.com/tjd10684-bit/U-wave-module/releases/tag/v0.2.0> with
+`mitutoyo-u-wave-0.2.0.zip` (10,938,532 bytes, SHA256
+`2ed7ebf38c3d19a27bb4ca291344cd707f04ff6718b0f233774ae7eb84778d0e`) and an LF-terminated
+`SHA256SUMS.txt`. It was built with `build_module.ps1` from a clean clone of commit `c5b2bd4`
+(the `v0.2.0` tag) in a fresh virtual environment that installed the SDK from the public `v1.1.0`
+tag: 131 tests passed, `pip check` was clean and `host_check` passed on the frozen helper. The zip
+holds only `module.toml`, `mitutoyo-u-wave.exe` and its `_internal` runtime; a scan of every file
+and of the frozen Python archive found no private paths, and the only hit for the owner's name is
+the public `update_repository` value. The anonymous `releases/latest` API returns v0.2.0 and an
+independently downloaded zip matches the published checksum. Open ERP 0.2.12 or later offers it to
+0.1.1 installations; this is the first chance to test a real in-app update click (not yet done).
+The release notes tell testers to copy `links.json` before saving in 0.2.0 if they may roll back.
+
+Before release, a code review of the multiple-receiver change led to two
+setup-window fixes (`c5b2bd4`): links are
 judged against their own receiver, so a link on a receiver that failed to scan or
 is not in use shows **Not checked** (grey) instead of "Transmitter not found" (red),
 and a transmitter registered on several receivers is labelled as such; Read Values
