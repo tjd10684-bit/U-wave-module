@@ -21,7 +21,9 @@ supplied equipment, with optional balloon labels, and records one-to-one links.
 The host remains responsible for choosing the asset list supplied to setup.
 Discovery runs off the Tk thread and closes each COM port after scanning. Each
 scan invalidates previous availability; a port failure leaves its links
-unverified without hiding healthy ports. Device IDs found on multiple ports are
+unverified without hiding healthy ports. The window judges each link against its
+own receiver, so a link on a port that failed to scan or is not in use is shown
+as not checked rather than not found. Device IDs found on multiple ports are
 flagged as ambiguous, not silently assigned.
 
 To help the operator tell instruments apart, Read Values requests each Event

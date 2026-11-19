@@ -14,6 +14,11 @@ owner also confirmed both readings in the installed setup window; saved routing
 and installed executable identity were checked. Pre-commit full-suite validation
 then passed: **130 tests, no skips**, using `python -m pytest tests -q -rs`.
 
+Release 0.2.0 software result (2026-11-19): after the pre-release review fixes
+(per-receiver link status, "No data yet" not reported as a failure) the full
+suite passed **131 tests, no skips** on Windows with Python 3.12.10. The fixes
+change only setup-window display; the hardware checks above were not repeated.
+
 Run the complete accessory suite from the checkout:
 
 ```powershell

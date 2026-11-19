@@ -34,7 +34,7 @@ import tkinter as tk
 from tkinter import font as tkfont, messagebox, ttk
 from typing import Callable, Iterable, Protocol
 
-from .links import AccessoryConfig, ConfigError, ConfigStore, LinkState, check_link
+from .links import AccessoryConfig, ConfigError, ConfigStore, Link, LinkCheck, LinkState, check_link
 from .protocol import (
     MeasurementMode, MeasurementPacket, Packet, ReceiverInfo, StatusCode, TransmitterInfo, TransmitterState,
 )
@@ -291,6 +291,7 @@ class SetupWindow(tk.Toplevel):
         self.scans: dict[str, ScanResult] = {}
         self.scan_errors: dict[str, str] = {}
         self._device_ports: dict[str, str] = {}
+        self._ambiguous: dict[str, list[str]] = {}  # device ID to the receivers that all list it
         self.readings: dict[str, LatestReading | ReceiverError] = {}  # latest value request by device ID
         self.pressed: dict[str, LatestReading] = {}  # latest DATA press by device ID (Button driven)
         self._known: dict[str, LatestReading | ReceiverError] = {}  # last value or "no data" by device ID
@@ -508,7 +509,7 @@ class SetupWindow(tk.Toplevel):
 
     def _settings_changed(self) -> None:
         self.dirty = True
-        self.scans, self.scan_errors, self._device_ports = {}, {}, {}
+        self.scans, self.scan_errors, self._device_ports, self._ambiguous = {}, {}, {}, {}
         self.transmitters = self.receiver = None
         self.redraw()
         self.scan()
@@ -524,7 +525,7 @@ class SetupWindow(tk.Toplevel):
             self._set_status("Choose a COM port and check Use this receiver, then scan.", error=True)
             return
         self.scanning = True
-        self.scans, self.scan_errors, self._device_ports = {}, {}, {}
+        self.scans, self.scan_errors, self._device_ports, self._ambiguous = {}, {}, {}, {}
         self.transmitters = self.receiver = None
         self._select(None)
         self.scan_button.configure(state="disabled", text="Scanning...")
@@ -572,9 +573,9 @@ class SetupWindow(tk.Toplevel):
             for info in scan.transmitters:
                 locations.setdefault(info.device_id, []).append(port)
         self._device_ports = {device: ports[0] for device, ports in locations.items() if len(ports) == 1}
-        for device, ports in locations.items():
-            if len(ports) > 1:
-                self.scan_errors[f"ID {device}"] = f"registered on multiple receivers ({', '.join(ports)}); not usable"
+        self._ambiguous = {device: ports for device, ports in locations.items() if len(ports) > 1}
+        for device, ports in self._ambiguous.items():
+            self.scan_errors[f"ID {device}"] = f"registered on multiple receivers ({', '.join(ports)}); not usable"
         self.transmitters = [
             info for scan in self.scans.values() for info in scan.transmitters if info.device_id in self._device_ports
         ] if self.scans else None
@@ -669,7 +670,7 @@ class SetupWindow(tk.Toplevel):
             self._set_live(f"No values changed since the last read ({datetime.now():%H:%M:%S}).")
         failures = [
             f"{self._channel_label(device)}: {error}" for device, error in result.items()
-            if isinstance(error, ReceiverError)
+            if isinstance(error, ReceiverError) and _value_key(error) != _NO_DATA  # "no data yet" is shown on the card
         ]
         if failures:
             self._set_live(self.live_var.get() + " Unavailable: " + "; ".join(failures), error=True)
@@ -1009,6 +1010,35 @@ class SetupWindow(tk.Toplevel):
 
     # Linking ----------------------------------------------------------------
 
+    def _check(self, link: Link) -> tuple[LinkCheck, tuple[str, str] | None]:
+        """Judge a link against its own receiver's scan.
+
+        Also returns a (label, colour) where the generic one for the state would mislead: a link whose
+        receiver failed to scan or is not in use was not checked, rather than not found.
+        """
+        check = check_link(link, self.transmitters)
+        if check.state != LinkState.NOT_FOUND:
+            return check, None
+        ports = self._ambiguous.get(link.device_id)
+        if ports:
+            return LinkCheck(
+                LinkState.NOT_FOUND, f"Transmitter {link.device_id} is registered on several receivers "
+                f"({', '.join(ports)}); register it on only one of them and rescan.",
+            ), ("Registered on several receivers", RED)
+        port = self.settings.port_for_link(link)
+        if port is not None and port not in self.settings.receivers:
+            return LinkCheck(
+                LinkState.NOT_SCANNED, f"Receiver {port} is not in use, so this link was not checked and cannot "
+                f"capture. Select {port} and check Use this receiver to use it.",
+            ), (f"Not checked: {port} not in use", GRAY)
+        failed = [item for item in self.settings.receivers if item not in self.scans]
+        if failed and (port is None or port in failed):
+            return LinkCheck(
+                LinkState.NOT_SCANNED, f"Receiver {port or _join(failed)} could not be scanned, so this link was "
+                "not checked. Fix the receiver and click Scan Receivers.",
+            ), ("Not checked: receiver scan failed", GRAY)
+        return check, None
+
     def link(self, device_id: str, asset_id: str) -> bool:
         info = next((item for item in self.transmitters or () if item.device_id == device_id), None)
         asset = next((item for item in self.assets if item.asset_id == asset_id), None)
@@ -1029,7 +1059,7 @@ class SetupWindow(tk.Toplevel):
             return False
         replaced = self.settings.link(asset_id, asset.tag, info, self._device_ports[device_id])
         self.dirty = True
-        check = check_link(self.settings.links[asset_id], self.transmitters)
+        check, _ = self._check(self.settings.links[asset_id])
         message = f"Linked {asset.tag} to channel {info.channel:02d} (transmitter {info.device_id})."
         if replaced:
             message += " Replaced: " + ", ".join(
@@ -1074,7 +1104,11 @@ class SetupWindow(tk.Toplevel):
         if kind == "tx":
             info = next((item for item in self.transmitters or () if item.device_id == ident), None)
             if info is None:
-                self._set_hint(f"Transmitter {ident} was not found in the latest scan.", warning=True)
+                link = self.settings.link_for_device(ident)
+                message = (
+                    self._check(link)[0].message if link else f"Transmitter {ident} was not found in the latest scan."
+                )
+                self._set_hint(message, warning=True)
             else:
                 self._set_hint(f"Channel {info.channel:02d} selected: click an asset to link it.")
             return
@@ -1087,7 +1121,7 @@ class SetupWindow(tk.Toplevel):
                 "reading." if kind == "asset" else DEFAULT_HINT,
             )
             return
-        check = check_link(link, self.transmitters)
+        check, _ = self._check(link)
         prefix = f"{label} selected: click a transmitter to relink it. " if kind == "asset" else f"{label}: "
         self._set_hint(prefix + check.message + " Press Delete or Unlink to remove the link.", warning=not check.usable)
 
@@ -1199,13 +1233,13 @@ class SetupWindow(tk.Toplevel):
             if not start:
                 continue
             (x1, y1), (x2, y2) = start, self._ports[("asset", asset.asset_id)]
-            check = check_link(link, self.transmitters)
+            check, style = self._check(link)
             selected = self._selected == ("link", asset.asset_id)
             middle = (x1 + x2) / 2
             options = {"dash": (6, 4)} if check.state in (LinkState.NOT_FOUND, LinkState.NOT_SCANNED) else {}
             line = canvas.create_line(
                 x1, y1, middle, y1, middle, y2, x2, y2, smooth=True, splinesteps=24,
-                width=6 if selected else 3, fill=_STATE_STYLE[check.state][1], capstyle="round", **options,
+                width=6 if selected else 3, fill=(style or _STATE_STYLE[check.state])[1], capstyle="round", **options,
             )
             canvas.tag_lower(line)
             self._hit[line] = ("link", asset.asset_id)
@@ -1234,7 +1268,7 @@ class SetupWindow(tk.Toplevel):
     def _transmitter_text(self, info: TransmitterInfo | None, ghost_link, visible: list[Asset]):
         if info is None:
             channel = "--" if ghost_link.channel is None else f"{ghost_link.channel:02d}"
-            status = (
+            status = self._check(ghost_link)[1] or (
                 ("Not scanned yet", GRAY) if self.transmitters is None else ("Not found in scanned receivers", RED)
             )
             port = f" ({ghost_link.port})" if ghost_link.port else ""
@@ -1281,8 +1315,8 @@ class SetupWindow(tk.Toplevel):
         link = self.settings.links.get(asset.asset_id)
         if link is None:
             return asset.tag or asset.asset_id, subtitle, "Not linked", GRAY, False
-        check = check_link(link, self.transmitters)
-        label, color = _STATE_STYLE[check.state]
+        check, style = self._check(link)
+        label, color = style or _STATE_STYLE[check.state]
         channel = check.transmitter.channel if check.transmitter else link.channel
         prefix = "" if channel is None else f"CH {channel:02d} · "
         port = self.settings.port_for_link(link)

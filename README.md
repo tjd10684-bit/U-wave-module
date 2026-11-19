@@ -3,7 +3,7 @@
 An optional measurement-data collection accessory for Open ERP's inspection
 workflow.
 
-**Status: experimental U-WAVE helper module 0.2.0, 2026-11-18.** Setup can scan
+**Status: experimental U-WAVE helper module 0.2.0, released 2026-11-19.** Setup can scan
 and read multiple receiver ports; Capture routes the selected asset to its
 receiver. USB U-WAVE-R and the U-WAVEPAK-BW Bluetooth bridge have been exercised
 together on one Windows 11 workstation, including captures through the packaged
@@ -116,6 +116,9 @@ Back up settings before upgrading: older modules cannot read schema 2, so a
 downgrade also requires restoring the pre-upgrade settings file. An unresolved
 legacy link cannot be captured with several receivers enabled until it is scanned
 and saved. Disabling a receiver preserves its links but blocks captures from it.
+In setup, a link whose receiver failed to scan or is not in use is shown as
+**Not checked** rather than missing, and a transmitter registered on several
+receivers is flagged and cannot be linked or captured until it is on only one.
 
 ## Download a tester build
 
@@ -126,11 +129,13 @@ build that has the measurement-module host (0.2.11 or later). Check the download
 then in Open ERP choose **Settings > Measurement Devices... > Add Module...** and
 select the zip:
 
-The current checkout builds 0.2.0 locally; it has not yet been published.
-The latest published release remains 0.1.1.
+The latest release is 0.2.0. Open ERP 0.2.12 or later offers it automatically
+to installations of 0.1.1 (0.1.0 must be replaced by hand). The update keeps
+your links; 0.2.0 rewrites the settings as schema 2 only when you click **Save**
+in setup, so copy `links.json` first if you might go back to 0.1.1.
 
 ```powershell
-Get-FileHash .\mitutoyo-u-wave-0.1.1.zip -Algorithm SHA256   # compare with SHA256SUMS.txt
+Get-FileHash .\mitutoyo-u-wave-0.2.0.zip -Algorithm SHA256   # compare with SHA256SUMS.txt
 ```
 
 Only install modules from publishers you trust: the package is not code-signed, so

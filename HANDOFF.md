@@ -1,6 +1,15 @@
 # Project handoff
 
-Updated 2026-11-18: **unreleased local tester 0.2.0** adds multiple enabled
+Updated 2026-11-19: **0.2.0 is prepared for release** from `main` as a normal
+release; the published record is added above this entry. Before release, a code
+review of the multiple-receiver change led to two setup-window fixes: links are
+judged against their own receiver, so a link on a receiver that failed to scan or
+is not in use shows **Not checked** (grey) instead of "Transmitter not found" (red),
+and a transmitter registered on several receivers is labelled as such; Read Values
+no longer reports a normal "No data yet" reply as a failure. Full suite: **131
+passed, no skips**. Capture behavior is unchanged.
+
+Updated 2026-11-18: tester **0.2.0** adds multiple enabled
 receiver ports, per-port groups and port-bound asset links. Scan Receivers and
 Read Values cover all enabled receivers; partial failures are explicit.
 Capture still reads one selected asset, opening only its bound port and
@@ -17,7 +26,8 @@ The owner installed the tested package in Open ERP 0.2.12 and reported both
 readings in setup; the installed executable hash and saved two-port routing were
 verified. Shop identities, readings, backups and logs remain outside this repo.
 Pre-commit full-suite validation also passed: **130 tests, no skips** using
-`python -m pytest tests -q -rs`. The 0.2.0 package is not a published release.
+`python -m pytest tests -q -rs`. That locally tested package was not published;
+the released 0.2.0 is rebuilt from a clean clone.
 
 Updated 2026-11-18: tester release **v0.1.1** (a normal release, marked latest) is published at
 <https://github.com/tjd10684-bit/U-wave-module/releases/tag/v0.1.1> with

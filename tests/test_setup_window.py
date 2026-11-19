@@ -273,6 +273,7 @@ def test_read_values_shows_what_changed_since_the_last_click(root, receiver, sto
     assert window._value_text(tx2) is None  # Button driven: the receiver keeps no value
     assert window._value_text(tx3) == ("No data yet", setup_window.AMBER)
     assert window.live_var.get().startswith("Values read at")
+    assert "Unavailable" not in window.live_var.get()  # "no data yet" is a state, not a failure
     assert window.link("0000100001", "a1")
 
     receiver.transmitters[1].value = Decimal("1.250")
@@ -596,18 +597,36 @@ def test_failed_receiver_does_not_hide_healthy_receiver_or_reuse_stale_values(ro
     assert set(window.readings) == {"0000200001"}
     assert "SIM unplugged" in window.status_var.get()
     assert window.settings.links["a1"].port == "SIM"
+    assert window._asset_text(window.assets[0])[2:4] == (
+        "SIM · CH 01 · Not checked: receiver scan failed", setup_window.GRAY,
+    )
     assert str(window.read_button["state"]) == "normal"
     assert str(window.identify_button["state"]) == "disabled"
     window.destroy()
 
 
 def test_duplicate_device_ids_across_receivers_are_not_silently_routed(root, receiver, store):
-    store.save(AccessoryConfig({"SIM": None, "OTHER": None}))
+    store.save(AccessoryConfig({"SIM": None, "OTHER": None}, {
+        "a1": Link("a1", "CAL-001", "0000100001", 1, 7, "SIM"),
+    }))
     window = open_window(root, receiver, store)
     assert window.transmitters == []
     assert "registered on multiple receivers" in window.status_var.get()
+    assert window._asset_text(window.assets[0])[2:4] == (
+        "SIM · CH 01 · Registered on several receivers", setup_window.RED,
+    )
     assert not window.link("0000100001", "a1")
     assert not any(isinstance(item, DataRequest) for item in receiver.requests)
+    window.destroy()
+
+
+def test_link_on_a_receiver_not_in_use_is_unchecked_rather_than_missing(root, receiver, store):
+    store.save(AccessoryConfig({"SIM": None}, {"a1": Link("a1", "CAL-001", "0000900001", 1, 7, "USB")}))
+    window = open_window(root, receiver, store)
+    assert window._asset_text(window.assets[0])[2:4] == ("CH 01 · Not checked: USB not in use", setup_window.GRAY)
+    click(window, point(window, ("tx", "0000900001")))
+    assert "Receiver USB is not in use" in window.hint_var.get()
+    assert window.settings.links["a1"].port == "USB"
     window.destroy()
 
 
