@@ -10,6 +10,19 @@ that sends the theme and reported both modes working. Once every supported Open 
 remove the preferences-file fallback (`saved_mode` and `open_erp_config_dir`). Full suite: 164
 passed. Capture is unchanged; the theme has not been looked at on the hardware PC yet.
 
+Updated 2026-11-19: tester release **v0.2.1** (a normal release, marked latest) is published at
+<https://github.com/tjd10684-bit/U-wave-module/releases/tag/v0.2.1> with
+`mitutoyo-u-wave-0.2.1.zip` (10,947,884 bytes, SHA256
+`d1f3235b8ce60a7587c6e99c6de99be00e49f8e8d0cdf191e2bdade4f6a604fc`) and an LF-terminated
+`SHA256SUMS.txt`. It was built with `build_module.ps1` from a clean clone of commit `0a1269d`
+(the `v0.2.1` tag) in a fresh virtual environment that installed the SDK from the public `v1.2.0`
+tag: 164 tests passed, `pip check` was clean and `host_check` passed on the frozen helper. A scan of
+the zip and of the frozen Python archive found no private paths (the only hit for the owner's name is
+the public `update_repository` value) and confirmed the SDK's theme code is bundled. The anonymous
+`releases/latest` API returns v0.2.1 and an independently downloaded zip matches the published
+checksum. The owner's test PC has a local 0.2.1 build installed; Open ERP will not offer the same
+version as an update, so reinstall the published zip there by hand.
+
 Updated 2026-11-19: tester release **v0.2.0** (a normal release, marked latest) is published at
 <https://github.com/tjd10684-bit/U-wave-module/releases/tag/v0.2.0> with
 `mitutoyo-u-wave-0.2.0.zip` (10,938,532 bytes, SHA256
