@@ -1,6 +1,6 @@
 id = "mitutoyo-u-wave"
 name = "Mitutoyo U-WAVE"
-version = "0.2.0"
+version = "0.2.1"
 publisher = "Open ERP"
 protocol = 1
 kind = "measurement"

@@ -19,6 +19,12 @@ Release 0.2.0 software result (2026-11-19): after the pre-release review fixes
 suite passed **131 tests, no skips** on Windows with Python 3.12.10. The fixes
 change only setup-window display; the hardware checks above were not repeated.
 
+Release 0.2.1 software result (2026-11-19): the light/dark setup window and the SDK 1.2.0 theme
+handshake. The full suite passed **164 tests, no skips** on Windows with Python 3.12.10 against the
+public SDK `v1.2.0`. The frozen helper followed the theme `host_check --setup --theme dark|light` sent,
+even with Open ERP's saved preference set to the other mode. The owner confirmed it in an Open ERP
+development build that sends the theme. Capture is unchanged and the hardware checks were not repeated.
+
 Run the complete accessory suite from the checkout:
 
 ```powershell

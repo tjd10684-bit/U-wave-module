@@ -3,9 +3,9 @@
 An optional measurement-data collection accessory for Open ERP's inspection
 workflow.
 
-**Status: experimental U-WAVE helper module 0.2.0, released 2026-11-19.** Setup can scan
+**Status: experimental U-WAVE helper module 0.2.1, released 2026-11-19.** Setup can scan
 and read multiple receiver ports; Capture routes the selected asset to its
-receiver. USB U-WAVE-R and the U-WAVEPAK-BW Bluetooth bridge have been exercised
+receiver. The setup window matches Open ERP's light or dark look. USB U-WAVE-R and the U-WAVEPAK-BW Bluetooth bridge have been exercised
 together on one Windows 11 workstation, including captures through the packaged
 helper. See [validation evidence and limits](VALIDATION_PLAN.md).
 The module uses Open ERP's
@@ -75,7 +75,8 @@ transmitter identities:
    simulated reading or press a simulated DATA button.
 
 The window matches Open ERP's light or dark look. When Open ERP sends its
-colors with the setup request (SDK 1.2 and an Open ERP that supports it), they
+colors with the setup request (module 0.2.1 with SDK 1.2 and an Open ERP newer
+than 0.2.12), they
 are used exactly. Otherwise the mode comes from the choice saved in Open ERP's
 per-workstation preferences, then Open ERP's default (dark) if it has run on
 this PC, then the Windows light/dark setting, then light. Preview a mode with
@@ -103,7 +104,7 @@ powershell -ExecutionPolicy Bypass -File .\build_module.ps1 -Python .\.venv\Scri
 ```
 
 The package is written to
-`module\build\mitutoyo-u-wave-0.2.0.zip`. In an Open ERP build containing the
+`module\build\mitutoyo-u-wave-0.2.1.zip`. In an Open ERP build containing the
 measurement-module host, choose **Settings > Measurement Devices... > Add
 Module...** and select that zip. Select **Mitutoyo U-WAVE**, choose
 **Open Setup...**, select **Simulator (demo)** and enable **Use this receiver**, then use the existing visual
@@ -136,13 +137,14 @@ build that has the measurement-module host (0.2.11 or later). Check the download
 then in Open ERP choose **Settings > Measurement Devices... > Add Module...** and
 select the zip:
 
-The latest release is 0.2.0. Open ERP 0.2.12 or later offers it automatically
-to installations of 0.1.1 (0.1.0 must be replaced by hand). The update keeps
-your links; 0.2.0 rewrites the settings as schema 2 only when you click **Save**
-in setup, so copy `links.json` first if you might go back to 0.1.1.
+The latest release is 0.2.1, which adds the light/dark setup window to 0.2.0.
+Open ERP 0.2.12 or later offers it automatically to installations of 0.1.1 or
+0.2.0 (0.1.0 must be replaced by hand). The update keeps your links. Coming from
+0.1.1, the settings are rewritten as schema 2 only when you click **Save** in
+setup, so copy `links.json` first if you might go back to 0.1.1.
 
 ```powershell
-Get-FileHash .\mitutoyo-u-wave-0.2.0.zip -Algorithm SHA256   # compare with SHA256SUMS.txt
+Get-FileHash .\mitutoyo-u-wave-0.2.1.zip -Algorithm SHA256   # compare with SHA256SUMS.txt
 ```
 
 Only install modules from publishers you trust: the package is not code-signed, so
@@ -236,7 +238,7 @@ Gauge -> U-WAVE Bluetooth module -> PC Bluetooth -> U-WAVEPAK-BW -> virtual COM 
 ```
 
 The second route does not pair with the U-WAVE-R receiver. Both routes can be
-enabled in 0.2.0; validate each installation and its reconnection behavior.
+enabled since 0.2.0; validate each installation and its reconnection behavior.
 In both documented event-driven routes, a request
 retrieves a latest stored reading; it is not a promise of a fresh, simultaneous
 measurement at the instant the pedal is pressed.

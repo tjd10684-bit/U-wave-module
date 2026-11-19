@@ -1,15 +1,14 @@
 # Project handoff
 
-Updated 2026-11-19 (after v0.2.0, not yet released): the setup window now follows
-Open ERP's light/dark look (`theme.py`). **Handshake:** the SDK's `open_setup` carries an optional
-`theme` (mode plus colours for sixteen neutral roles) that the module uses when present
-(`palette_from_host`). That SDK change is version 1.2.0 on the SDK's local branch `feat/host-theme`
-and has not been pushed or tagged; this project still pins `v1.1.0`, so a build made now only uses the
-fallback (the mode saved in Open ERP's preferences, then Open ERP's default of dark, then the Windows
-setting, then light). Before releasing the theme: push and tag the SDK `v1.2.0`, raise the pin in
-`pyproject.toml` and rebuild. The host must also send `theme` for exact colours; that is a private-host
-change handed to its own session. Once it does, remove the preferences-file fallback
-(`saved_mode` and `open_erp_config_dir`). Full suite: 164 passed. Look at both modes on the real PC.
+Updated 2026-11-19: **0.2.1** makes the setup window follow Open ERP's light/dark look
+(`theme.py`). **Handshake:** SDK 1.2.0 (tag `v1.2.0`, now pinned) adds an optional `theme` to
+`open_setup` (mode plus colours for sixteen neutral roles), exposed as `Module.host_theme`; the module
+uses it when present (`palette_from_host`). An Open ERP that does not send it (0.2.12 and older) gets
+the fallback: the mode saved in Open ERP's preferences, then Open ERP's default of dark, then the
+Windows setting, then light. The owner installed a local 0.2.1 build in an Open ERP development build
+that sends the theme and reported both modes working. Once every supported Open ERP sends the theme,
+remove the preferences-file fallback (`saved_mode` and `open_erp_config_dir`). Full suite: 164
+passed. Capture is unchanged; the theme has not been looked at on the hardware PC yet.
 
 Updated 2026-11-19: tester release **v0.2.0** (a normal release, marked latest) is published at
 <https://github.com/tjd10684-bit/U-wave-module/releases/tag/v0.2.0> with
@@ -100,8 +99,8 @@ Rebuilding changes the zip bytes (timestamps), so publish the exact file you has
 Updated 2026-11-18: the measurement module SDK moved from this repository's
 `sdk/` folder to its own repository,
 [Open-ERP-Module-SDK](https://github.com/tjd10684-bit/Open-ERP-Module-SDK)
-(history kept). This project installs it from the pinned `v1.1.0` tag (since 0.1.1; earlier builds
-used `v1.0.0`) through the `module` and `test` extras.
+(history kept). This project installs it from the pinned `v1.2.0` tag (since 0.2.1; 0.1.1 and 0.2.0
+used `v1.1.0`, earlier builds `v1.0.0`) through the `module` and `test` extras.
 
 Updated 2026-11-17: the experimental U-WAVE helper module is built against the
 Open ERP contract (the module SDK above). Physical hardware remains untested.
@@ -164,7 +163,7 @@ virtual COM bridge is now included in the limited hardware validation above.
 - The helper re-identifies the saved transmitter by Device ID within the
   capture deadline, follows its current channel, checks the acquisition mode,
   and returns the reported units and a stable transmitter source ID.
-  `build_module.ps1` produces `module/build/mitutoyo-u-wave-0.2.0.zip`.
+  `build_module.ps1` produces `module/build/mitutoyo-u-wave-0.2.1.zip`.
   The built module passed `host_check`, Open ERP's real module-manager install,
   setup-window launch, and simulator capture checks.
   The host supplies the asset list; the module does not query the ERP database.
