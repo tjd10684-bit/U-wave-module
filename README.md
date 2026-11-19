@@ -3,10 +3,12 @@
 An optional measurement-data collection accessory for Open ERP's inspection
 workflow.
 
-**Status: experimental U-WAVE helper module, 2026-11-17.** The legacy receiver
-protocol, virtual-COM transport, simulated receiver, visual asset-linking window
-and Open ERP helper package are implemented and tested against the simulator.
-They have not been validated on physical hardware. The module uses Open ERP's
+**Status: experimental U-WAVE helper module 0.2.0, 2026-11-18.** Setup can scan
+and read multiple receiver ports; Capture routes the selected asset to its
+receiver. USB U-WAVE-R and the U-WAVEPAK-BW Bluetooth bridge have been exercised
+together on one Windows 11 workstation, including captures through the packaged
+helper. See [validation evidence and limits](VALIDATION_PLAN.md).
+The module uses Open ERP's
 separate helper-program contract (see the
 [module SDK](https://github.com/tjd10684-bit/Open-ERP-Module-SDK), a separate repository).
 
@@ -14,7 +16,7 @@ separate helper-program contract (see the
 
 Keep ordinary HID/keyboard-style gauge input working as it does today. The goal
 is an optional data-collection accessory for instrument identification and
-software-requested readings; multi-gauge capture remains a future extension.
+software-requested readings; paired/synchronized capture remains a future extension.
 
 U-WAVE is intended to be the first accessory. Other manufacturers should be
 supported by separate accessories behind a common inspection interface, rather
@@ -94,10 +96,10 @@ powershell -ExecutionPolicy Bypass -File .\build_module.ps1 -Python .\.venv\Scri
 ```
 
 The package is written to
-`module\build\mitutoyo-u-wave-0.1.1.zip`. In an Open ERP build containing the
+`module\build\mitutoyo-u-wave-0.2.0.zip`. In an Open ERP build containing the
 measurement-module host, choose **Settings > Measurement Devices... > Add
 Module...** and select that zip. Select **Mitutoyo U-WAVE**, choose
-**Open Setup...**, select **Simulator (demo)**, then use the existing visual
+**Open Setup...**, select **Simulator (demo)** and enable **Use this receiver**, then use the existing visual
 linking interface to link a transmitter to an eligible asset and save. The demo
 instrument window lets you change readings or press DATA; Capture (Ctrl+M)
 returns the linked simulated transmitter's latest value.
@@ -106,6 +108,14 @@ The module stores its settings in Open ERP's per-user
 `%LOCALAPPDATA%\Open ERP\module-data\mitutoyo-u-wave\links.json`. The standalone
 hardware window's `%LOCALAPPDATA%\UWaveAccessory\links.json` is separate and is not
 automatically migrated.
+
+Settings schema 2 stores the enabled receiver ports/groups and each link's port.
+Schema 1 settings load without being rewritten; a successful scan binds legacy
+links to the receiver where each Device ID is found, and **Save** writes schema 2.
+Back up settings before upgrading: older modules cannot read schema 2, so a
+downgrade also requires restoring the pre-upgrade settings file. An unresolved
+legacy link cannot be captured with several receivers enabled until it is scanned
+and saved. Disabling a receiver preserves its links but blocks captures from it.
 
 ## Download a tester build
 
@@ -116,14 +126,17 @@ build that has the measurement-module host (0.2.11 or later). Check the download
 then in Open ERP choose **Settings > Measurement Devices... > Add Module...** and
 select the zip:
 
+The current checkout builds 0.2.0 locally; it has not yet been published.
+The latest published release remains 0.1.1.
+
 ```powershell
 Get-FileHash .\mitutoyo-u-wave-0.1.1.zip -Algorithm SHA256   # compare with SHA256SUMS.txt
 ```
 
 Only install modules from publishers you trust: the package is not code-signed, so
-Open ERP asks you to confirm the publisher. The simulator was tested; a physical
-receiver and transmitter have not been, so treat results as a preview and report
-what you see.
+Open ERP asks you to confirm the publisher. Hardware evidence is limited to the
+configuration and checks in the validation plan; treat results as a preview,
+not a blanket hardware-compatibility or production-inspection guarantee.
 
 ### Updates
 
@@ -146,24 +159,36 @@ Start without `--demo` to inspect the actual receiver:
 This route requires the manufacturer's working **virtual COM driver**. Direct
 USB support in U-WAVEPAK alone is not sufficient. Close legacy U-WAVEPAK Setup,
 Data I/F and any other port owner before scanning. Select the receiver's actual
-COM port, then its known Group ID (or Auto), and **Scan Receiver**. The scan opens
-and closes the port; it does not automate or read the U-WAVEPAK window, modify
-registrations, change modes or reset the hardware. Read Values also opens and
-closes the port; Identify and Link All keep it open until they finish. Whether
+COM port, its known Group ID (or Auto), and check **Use this receiver**.
+Repeat for each receiver, including BW's displayed virtual COM port when using
+Bluetooth. **Keep U-WAVEPAK-BW running**; it is the bridge, not a competing
+legacy USB port owner. Disable **Simulator** if it is not part of the test.
+
+Selecting a port edits that receiver's settings; it does not disable the others.
+**Scan Receivers** discovers all enabled ports; **Read Values** reads their
+connected Event driven transmitters in one action. Port labels distinguish
+equal channel numbers. Requests are sequential latest-value reads, not simultaneous
+physical samples. A failed port is reported without hiding healthy ports, and
+duplicate Device IDs across ports are flagged rather than silently routed.
+
+Scans and reads open and close each port; they do not modify vendor registrations,
+modes or radio settings. **Identify** and **Link All** operate only on the
+selected receiver and hold that port until they finish. Whether
 the receiver forwards a Button driven DATA press over the virtual COM port, which
 Identify relies on for those transmitters, is still to be confirmed.
 
 The standalone hardware window has no ERP assets. In the helper module,
 **Open Setup...** receives the assets supplied by Open ERP and uses this same
 visual linking interface. Capture re-identifies a linked transmitter by Device
-ID and follows its current channel before requesting a reading. The simulated
-path and module integration are tested; real receiver/transmitter behavior is
-not yet verified. Do not mistake a saved visual link for a verified hardware
-connection.
+ID on its saved receiver port and follows its current channel before requesting
+a reading. Other receivers need not be online for that capture. Each ERP Capture
+still returns one reading for the selected asset; the host workflow is unchanged.
+Do not mistake a saved visual link for a verified hardware connection.
 
 Start with the checks in [HANDOFF.md](HANDOFF.md) and
-[VALIDATION_PLAN.md](VALIDATION_PLAN.md). Bluetooth, mixed receivers, paired
-capture and guaranteed fresh/simultaneous measurements are not supported here.
+[VALIDATION_PLAN.md](VALIDATION_PLAN.md). Bluetooth requires the BW bridge;
+native BLE, paired capture and guaranteed fresh/simultaneous measurements are
+not implemented.
 
 ## Package layout
 
@@ -197,8 +222,9 @@ Gauge -> U-WAVE transmitter -> wireless -> U-WAVE-R -> USB -> collector
 Gauge -> U-WAVE Bluetooth module -> PC Bluetooth -> U-WAVEPAK-BW -> virtual COM -> collector
 ```
 
-The second route does not pair with the U-WAVE-R receiver. Mixed operation is
-unverified and must be tested. In both documented event-driven routes, a request
+The second route does not pair with the U-WAVE-R receiver. Both routes can be
+enabled in 0.2.0; validate each installation and its reconnection behavior.
+In both documented event-driven routes, a request
 retrieves a latest stored reading; it is not a promise of a fresh, simultaneous
 measurement at the instant the pedal is pressed.
 

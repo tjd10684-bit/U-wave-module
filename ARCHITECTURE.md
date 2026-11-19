@@ -3,9 +3,10 @@
 The initial API is described in [HOST_CONTRACT.md](HOST_CONTRACT.md).
 The host-neutral package implements protocol, VCP transport, discovery and the
 visual setup window. `module/uwave_module.py` adapts it to Open ERP's helper
-protocol and implements single-transmitter latest-value capture. Physical
-hardware and broader multi-instrument behavior remain unverified or out of
-scope.
+protocol and implements single-transmitter latest-value capture across configured
+receiver ports. Basic USB/BW-bridge hardware checks are recorded in
+[VALIDATION_PLAN.md](VALIDATION_PLAN.md); paired or synchronized capture remains
+out of scope.
 
 ## Implemented setup path
 
@@ -18,12 +19,15 @@ Host-supplied assets -> visual linking window <- IR/RI/TI receiver discovery
 The setup window does not query or change the ERP database. It displays the
 supplied equipment, with optional balloon labels, and records one-to-one links.
 The host remains responsible for choosing the asset list supplied to setup.
-Discovery runs off the Tk thread and closes the COM port after scanning. Each
-scan invalidates previous availability; failure leaves links unverified.
+Discovery runs off the Tk thread and closes each COM port after scanning. Each
+scan invalidates previous availability; a port failure leaves its links
+unverified without hiding healthy ports. Device IDs found on multiple ports are
+flagged as ambiguous, not silently assigned.
 
 To help the operator tell instruments apart, Read Values requests each Event
-driven transmitter's latest value once per click; it opens and closes the port
-like a scan. Identify and Link All hold the port in a worker thread, requesting
+driven transmitter's latest value once per click across enabled ports,
+sequentially opening and closing each port. Identify and Link All use only the
+selected receiver and hold its port in a worker thread, requesting
 those values about once a second and listening for DATA presses that the
 receiver forwards from Button driven transmitters. The first values read for
 each asset are its baseline: a single transmitter whose value then changes, or
@@ -34,7 +38,11 @@ identification take turns on the port through one process-wide lock, because
 Windows opens a COM port exclusively. DR requests are answered from the
 receiver's stored values, so reading does not wake transmitters.
 
-Saved addresses can follow a Device ID to another channel. A capture provider
+Schema 2 stores enabled receiver ports/groups and each asset link's port.
+Legacy schema 1 is read without rewriting it until Save; a fresh scan binds
+legacy links. Unresolved multi-receiver links cannot be captured. Saved
+addresses can follow an unambiguously discovered Device ID to another channel
+or receiver port. A capture provider
 must revalidate the source and mode at acquisition time; a saved link or a green
 setup card is not a substitute for live capture validation.
 

@@ -63,7 +63,7 @@ def store(tmp_path):
 def open_window(root, receiver, store, **options):
     window = SetupWindow(
         root, EQUIPMENT, store=store, open_transport=options.pop("open_transport", lambda _port: receiver),
-        list_ports=lambda: [PortInfo("SIM", "simulator")], default_port="SIM", **options,
+        list_ports=options.pop("list_ports", lambda: [PortInfo("SIM", "simulator")]), default_port="SIM", **options,
     )
     wait_for(root, lambda: not window.scanning and window._startup_id is None)
     return window
@@ -128,7 +128,8 @@ def test_drag_links_either_way_and_delete_unlinks(root, receiver, store):
     drag(window, point(window, TX1), point(window, ("asset", "a1")))
     drag(window, point(window, ("asset", "a2")), point(window, TX2))
     assert window.settings.links == {
-        "a1": Link("a1", "CAL-001", "0000100001", 1, 7), "a2": Link("a2", "MIC-002", "0000100002", 2, 7),
+        "a1": Link("a1", "CAL-001", "0000100001", 1, 7, "SIM"),
+        "a2": Link("a2", "MIC-002", "0000100002", 2, 7, "SIM"),
     }
     assert "Event driven" in window.hint_var.get()
     click(window, SimpleNamespace(x=2, y=2))
@@ -146,7 +147,7 @@ def test_click_one_then_the_other_links_and_relinking_replaces(root, receiver, s
     click(window, point(window, ("asset", "a2")))
     click(window, point(window, TX1))
     click(window, point(window, ("asset", "a1")))
-    assert window.settings.links == {"a1": Link("a1", "CAL-001", "0000100001", 1, 7)}
+    assert window.settings.links == {"a1": Link("a1", "CAL-001", "0000100001", 1, 7, "SIM")}
     assert "Replaced: MIC-002" in window.hint_var.get()
     window.destroy()
 
@@ -166,7 +167,7 @@ def test_saved_link_to_a_missing_transmitter_stays_visible_as_not_found(root, re
 
 @pytest.mark.parametrize("confirm", [False, True])
 def test_taking_a_transmitter_from_an_asset_outside_the_list_asks_first(root, receiver, store, monkeypatch, confirm):
-    config = AccessoryConfig("SIM")
+    config = AccessoryConfig({"SIM": None})
     config.links["other"] = Link("other", "GAGE-9", "0000100001", 1, 7)
     store.save(config)
     window = open_window(root, receiver, store)
@@ -191,7 +192,7 @@ def test_scan_failure_is_reported_and_lists_nothing(root, receiver, store):
 
     window = open_window(root, receiver, store, open_transport=busy)
     assert window.transmitters is None
-    assert window.status_var.get() == "Scan failed: Could not open SIM: access denied."
+    assert "Scan failed: SIM: Could not open SIM: access denied." in window.status_var.get()
     window.destroy()
 
 
@@ -352,7 +353,7 @@ def test_identify_links_the_selected_asset_to_the_instrument_whose_reading_chang
 
     receiver.transmitters[1].value = Decimal("1.005")
     wait_for(root, lambda: window._identify is None)
-    assert window.settings.links == {"a2": Link("a2", "MIC-002", "0000100001", 1, 7)}
+    assert window.settings.links == {"a2": Link("a2", "MIC-002", "0000100001", 1, 7, "SIM")}
     assert window.live_var.get() == "Linked MIC-002 to CH 01. Click Save to keep it."
     assert window._moved == {"0000100001"} and not window.identify_bar.grid_info()
     worker.join(timeout=5)
@@ -379,7 +380,8 @@ def test_link_all_identifies_each_unlinked_asset_in_turn(root, receiver, store):
     receiver.transmitters[1].value = Decimal("0.995")
     wait_for(root, lambda: window._identify is None)
     assert window.settings.links == {
-        "a1": Link("a1", "CAL-001", "0000100002", 2, 7), "a2": Link("a2", "MIC-002", "0000100001", 1, 7),
+        "a1": Link("a1", "CAL-001", "0000100002", 2, 7, "SIM"),
+        "a2": Link("a2", "MIC-002", "0000100001", 1, 7, "SIM"),
     }
     assert window.live_var.get() == (
         "Link All finished. Linked CAL-001 to CH 02 and MIC-002 to CH 01. Click Save to keep them."
@@ -533,3 +535,116 @@ def test_closing_during_identify_stops_the_worker_and_frees_the_port(root, recei
     assert not worker.is_alive()
     assert setup_window.PORT_LOCK.acquire(timeout=1)
     setup_window.PORT_LOCK.release()
+
+
+def test_enabling_two_receivers_reads_both_and_saves_port_bound_links(root, receiver, store):
+    second = SimulatedReceiver(group=7)
+    second.register(1, "0000200001", "0.5000", "in")
+    receivers = {"SIM": receiver, "BLE": second}
+    window = open_window(root, receiver, store, open_transport=receivers.__getitem__,
+                         list_ports=lambda: [PortInfo(port, port) for port in receivers])
+    wait_for(root, lambda: not window._reading)
+    window.link("0000100001", "a1")
+    window.port_var.set("BLE")
+    window._port_changed()
+    assert window.settings.receivers == {"SIM": None}
+    window.enabled_var.set(True)
+    window._receiver_toggled()
+    wait_for(root, lambda: not window.scanning and not window._reading)
+    assert window.settings.receivers == {"SIM": None, "BLE": None}
+    assert window.readings["0000100001"].packet.value == Decimal("1.000")
+    assert window.readings["0000200001"].packet.value == Decimal("0.5000")
+    assert window.link("0000200001", "a2")
+    receiver.transmitters[1].value = Decimal("1.250")
+    second.transmitters[1].value = Decimal("0.7500")
+    window.read_values()
+    wait_for(root, lambda: not window._reading)
+    assert window._moved == {"0000100001", "0000200001"}
+    assert "SIM CH 01" in window.live_var.get() and "BLE CH 01" in window.live_var.get()
+    assert "SIM" in window._asset_text(window.assets[0])[2]
+    assert "BLE" in window._asset_text(window.assets[1])[2]
+    assert window.save()
+    saved = store.load()
+    assert saved.receivers == {"SIM": None, "BLE": None}
+    assert saved.links["a1"].port == "SIM"
+    assert saved.links["a2"].port == "BLE"
+
+
+def test_failed_receiver_does_not_hide_healthy_receiver_or_reuse_stale_values(root, receiver, store):
+    second = SimulatedReceiver(group=7)
+    second.register(1, "0000200001", "0.5000", "in")
+    receivers = {"SIM": receiver, "BLE": second}
+    store.save(AccessoryConfig({"SIM": None, "BLE": None}, {
+        "a1": Link("a1", "CAL-001", "0000100001", 1, 7, "SIM"),
+    }))
+
+    def open_port(port):
+        if port not in receivers:
+            raise TransportError(f"{port} unplugged")
+        return receivers[port]
+
+    window = open_window(root, receiver, store, open_transport=open_port)
+    wait_for(root, lambda: not window._reading)
+    del receivers["SIM"]
+    window.read_values()
+    wait_for(root, lambda: not window._reading)
+    assert isinstance(window.readings["0000100001"], TransportError)
+    assert window.readings["0000200001"].packet.value == Decimal("0.5000")
+    assert "SIM unplugged" in window.live_var.get()
+    window.scan()
+    wait_for(root, lambda: not window.scanning and not window._reading)
+    assert set(window.readings) == {"0000200001"}
+    assert "SIM unplugged" in window.status_var.get()
+    assert window.settings.links["a1"].port == "SIM"
+    assert str(window.read_button["state"]) == "normal"
+    assert str(window.identify_button["state"]) == "disabled"
+    window.destroy()
+
+
+def test_duplicate_device_ids_across_receivers_are_not_silently_routed(root, receiver, store):
+    store.save(AccessoryConfig({"SIM": None, "OTHER": None}))
+    window = open_window(root, receiver, store)
+    assert window.transmitters == []
+    assert "registered on multiple receivers" in window.status_var.get()
+    assert not window.link("0000100001", "a1")
+    assert not any(isinstance(item, DataRequest) for item in receiver.requests)
+    window.destroy()
+
+
+def test_identify_uses_selected_receiver_when_channels_overlap(root, receiver, store):
+    second = SimulatedReceiver(group=7)
+    second.register(1, "0000200001", "0.5000", "in")
+    receivers = {"SIM": receiver, "BLE": second}
+    store.save(AccessoryConfig({"SIM": None, "BLE": None}))
+    window = open_window(root, receiver, store, open_transport=receivers.__getitem__, identify_interval=0.02,
+                         list_ports=lambda: [PortInfo(port, port) for port in receivers])
+    wait_for(root, lambda: not window._reading)
+    window.port_var.set("BLE")
+    window._port_changed()
+    click(window, point(window, ("asset", "a2")))
+    window.identify()
+    wait_for(root, lambda: window._identify.deadline is not None)
+    assert window._identify.event_devices == {"0000200001"}
+    assert "Receiver: BLE" in window.identify_var.get()
+    second.transmitters[1].value = Decimal("0.7500")
+    wait_for(root, lambda: window._identify is None)
+    assert window.settings.links["a2"].port == "BLE"
+    assert window.settings.links["a2"].device_id == "0000200001"
+    window.destroy()
+
+
+def test_disabling_receiver_keeps_links_but_does_not_reenable_it_on_reopen(root, receiver, store):
+    window = open_window(root, receiver, store)
+    wait_for(root, lambda: not window._reading)
+    window.link("0000100001", "a1")
+    window.enabled_var.set(False)
+    window._receiver_toggled()
+    assert window.transmitters is None and not window.readings
+    assert str(window.read_button["state"]) == "disabled"
+    assert window.save()
+    window = open_window(root, receiver, store)
+    assert window.settings.receivers == {}
+    assert window.settings.links["a1"].port == "SIM"
+    assert window.transmitters is None
+    assert not window.enabled_var.get()
+    window.destroy()

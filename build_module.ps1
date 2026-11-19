@@ -26,5 +26,5 @@ Copy-Item (Join-Path $module "module.toml") $folder
 $env:PYTHONPATH = $source
 & $Python -m open_erp_module.host_check $folder
 if ($LASTEXITCODE -ne 0) { throw "The built module failed host_check." }
-& $Python -m open_erp_module.package $folder -o (Join-Path $build "mitutoyo-u-wave-0.1.1.zip")
+& $Python -m open_erp_module.package $folder -o (Join-Path $build "mitutoyo-u-wave-0.2.0.zip")
 if ($LASTEXITCODE -ne 0) { throw "Packaging failed." }

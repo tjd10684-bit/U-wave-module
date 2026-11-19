@@ -4,9 +4,11 @@ from datetime import datetime, timezone
 import pytest
 
 from open_erp_module import CaptureRequest, Context, ModuleError
-from uwave_accessory.links import ConfigStore, Link
+from uwave_accessory.links import AccessoryConfig, ConfigStore, Link
 from uwave_accessory.protocol import MeasurementMode
 from uwave_accessory.setup_window import DEMO_PORT, PORT_LOCK
+from uwave_accessory.serial_transport import TransportError
+from uwave_accessory.simulation import SimulatedReceiver
 from module.uwave_module import UWaveModule
 
 
@@ -19,8 +21,7 @@ def uwave_module(tmp_path):
     module = UWaveModule()
     store = ConfigStore(tmp_path / "links.json")
     settings = store.load()
-    settings.port = DEMO_PORT
-    settings.group = 7
+    settings.receivers[DEMO_PORT] = 7
     settings.links[ASSET] = Link(ASSET, "MIC-014", DEVICE, 1, 7)
     store.save(settings)
     module.initialize(Context("mitutoyo-u-wave", tmp_path, "Open ERP", "test"))
@@ -132,3 +133,50 @@ def test_simulator_port_remains_available_without_serial_driver(monkeypatch):
     assert module_file.UWaveModule._list_ports() == [
         module_file.PortInfo(DEMO_PORT, "Simulator (demo)"),
     ]
+
+
+def test_capture_routes_each_asset_to_its_port_despite_shared_group_and_channel(tmp_path, monkeypatch):
+    first, second = SimulatedReceiver(group=7), SimulatedReceiver(group=7)
+    first.register(1, DEVICE, "1.234", "mm")
+    second.register(1, "0000200001", "0.5678", "in")
+    store = ConfigStore(tmp_path / "links.json")
+    store.save(AccessoryConfig({"COM5": None, "COM6": 7}, {
+        ASSET: Link(ASSET, "MIC-1", DEVICE, 1, 7, "COM5"),
+        "asset-2": Link("asset-2", "CAL-2", "0000200001", 1, 7, "COM6"),
+    }))
+    module = UWaveModule()
+    module.initialize(Context("mitutoyo-u-wave", tmp_path, "Open ERP", "test"))
+    opened = []
+    receivers = {"COM5": first, "COM6": second}
+
+    def open_port(port):
+        opened.append(port)
+        if port not in receivers:
+            raise TransportError(f"{port} unplugged")
+        return receivers[port]
+
+    monkeypatch.setattr(module, "_open_transport", open_port)
+    assert module.capture(request()).value == 1.234
+    assert module.capture(request("asset-2")).value == 0.5678
+    assert opened == ["COM5", "COM6"]
+    del receivers["COM5"]
+    assert module.capture(request("asset-2")).units == "in"
+    with pytest.raises(ModuleError, match="COM5.*unplugged"):
+        module.capture(request())
+    assert module.capture(request("asset-2")).value == 0.5678
+    receivers["COM6"] = first
+    with pytest.raises(ModuleError, match="not registered"):
+        module.capture(request("asset-2"))
+
+
+@pytest.mark.parametrize(("port", "message"), [(None, "Rescan"), ("COM9", "not enabled")])
+def test_capture_refuses_unresolved_or_disabled_receiver(tmp_path, monkeypatch, port, message):
+    store = ConfigStore(tmp_path / "links.json")
+    store.save(AccessoryConfig({"COM5": 7, "COM6": 7}, {
+        ASSET: Link(ASSET, "MIC-1", DEVICE, 1, 7, port),
+    }))
+    module = UWaveModule()
+    module.initialize(Context("mitutoyo-u-wave", tmp_path, "Open ERP", "test"))
+    monkeypatch.setattr(module, "_open_transport", lambda _port: pytest.fail("must not open an arbitrary receiver"))
+    with pytest.raises(ModuleError, match=message):
+        module.capture(request())

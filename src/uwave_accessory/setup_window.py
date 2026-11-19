@@ -288,6 +288,9 @@ class SetupWindow(tk.Toplevel):
         self.scanning = False
         self.transmitters: list[TransmitterInfo] | None = None  # None: not scanned yet
         self.receiver: ReceiverInfo | None = None
+        self.scans: dict[str, ScanResult] = {}
+        self.scan_errors: dict[str, str] = {}
+        self._device_ports: dict[str, str] = {}
         self.readings: dict[str, LatestReading | ReceiverError] = {}  # latest value request by device ID
         self.pressed: dict[str, LatestReading] = {}  # latest DATA press by device ID (Button driven)
         self._known: dict[str, LatestReading | ReceiverError] = {}  # last value or "no data" by device ID
@@ -314,8 +317,9 @@ class SetupWindow(tk.Toplevel):
         except ConfigError as error:
             self._load_error = str(error)
             self.settings = AccessoryConfig()
-        if self.settings.port is None and default_port is not None:
-            self.settings.port = default_port
+        if not self.settings.receivers and default_port is not None and not self.store.path.exists():
+            self.settings.receivers[default_port] = None
+        self.selected_port = next(iter(self.settings.receivers), default_port)
 
         base = tkfont.nametofont("TkDefaultFont")
         size = base.cget("size")
@@ -346,35 +350,44 @@ class SetupWindow(tk.Toplevel):
         self.redraw()
         if self._load_error:
             self._set_status(f"{self._load_error}. Saving will replace it.", error=True)
-        elif self.settings.port in self._port_labels.values():
+        elif self.settings.receivers:
             self._startup_id = self.after_idle(self.scan)
 
     def _build_toolbar(self) -> None:
         bar = ttk.Frame(self, padding=(12, 10, 12, 6))
         bar.grid(row=0, column=0, sticky="ew")
-        ttk.Label(bar, text="Receiver port:").pack(side="left")
+        ports = ttk.Frame(bar)
+        ports.pack(fill="x")
+        ttk.Label(ports, text="Receiver port:").pack(side="left")
         self.port_var = tk.StringVar(self)
-        self.port_combo = ttk.Combobox(bar, textvariable=self.port_var, state="readonly", width=32)
+        self.port_combo = ttk.Combobox(ports, textvariable=self.port_var, state="readonly", width=32)
         self.port_combo.pack(side="left", padx=(4, 2))
         self.port_combo.bind("<<ComboboxSelected>>", self._port_changed)
-        ttk.Button(bar, text="Refresh", command=self.refresh_ports).pack(side="left", padx=(2, 12))
-        ttk.Label(bar, text="Group:").pack(side="left")
-        group = self.settings.group
+        ttk.Button(ports, text="Refresh", command=self.refresh_ports).pack(side="left", padx=(2, 12))
+        ttk.Label(ports, text="Group:").pack(side="left")
+        group = self.settings.receivers.get(self.selected_port)
         self.group_var = tk.StringVar(self, "Auto" if group is None else f"{group:02d}")
         self.group_combo = ttk.Combobox(
-            bar, textvariable=self.group_var, state="readonly", width=6,
+            ports, textvariable=self.group_var, state="readonly", width=6,
             values=["Auto", *(f"{value:02d}" for value in range(100))],
         )
         self.group_combo.pack(side="left", padx=(4, 12))
         self.group_combo.bind("<<ComboboxSelected>>", self._group_changed)
-        self.scan_button = ttk.Button(bar, text="Scan Receiver", command=self.scan)
+        self.enabled_var = tk.BooleanVar(self, self.selected_port in self.settings.receivers)
+        ttk.Checkbutton(
+            ports, text="Use this receiver", variable=self.enabled_var, command=self._receiver_toggled,
+        ).pack(side="left")
+        actions = ttk.Frame(bar)
+        actions.pack(fill="x", pady=(6, 0))
+        self.scan_button = ttk.Button(actions, text="Scan Receivers", command=self.scan)
         self.scan_button.pack(side="left")
-        self.read_button = ttk.Button(bar, text="Read Values", command=self.read_values, state="disabled")
+        self.read_button = ttk.Button(actions, text="Read Values", command=self.read_values, state="disabled")
         self.read_button.pack(side="left", padx=(6, 0))
+        ttk.Label(actions, text="Identify / Link All: selected port").pack(side="left", padx=12)
         self.filter_var = tk.StringVar(self)
         self._filter_trace: str | None = self.filter_var.trace_add("write", lambda *_args: self.redraw())
-        ttk.Entry(bar, textvariable=self.filter_var, width=22).pack(side="right")
-        ttk.Label(bar, text="Filter assets:").pack(side="right", padx=(12, 4))
+        ttk.Entry(actions, textvariable=self.filter_var, width=22).pack(side="right")
+        ttk.Label(actions, text="Filter assets:").pack(side="right", padx=(12, 4))
 
     def _build_canvas(self) -> None:
         body = ttk.Frame(self, padding=(12, 0))
@@ -450,30 +463,52 @@ class SetupWindow(tk.Toplevel):
             (port.device if port.description in ("", port.device) else f"{port.device}: {port.description}"):
             port.device for port in ports
         }
-        if self.settings.port and self.settings.port not in self._port_labels.values():
-            self._port_labels[f"{self.settings.port}: not present"] = self.settings.port
+        for port in self.settings.receivers:
+            if port not in self._port_labels.values():
+                self._port_labels[f"{port}: not present"] = port
         self.port_combo.configure(values=list(self._port_labels))
         self.port_var.set(next(
-            (label for label, device in self._port_labels.items() if device == self.settings.port), "",
+            (label for label, device in self._port_labels.items() if device == self.selected_port), "",
         ))
 
     def _port_changed(self, _event=None) -> None:
         port = self._port_labels.get(self.port_var.get())
+        self._end_identify("")
+        self.selected_port = port
+        group = self.settings.receivers.get(port)
+        self.group_var.set("Auto" if group is None else f"{group:02d}")
+        self.enabled_var.set(port in self.settings.receivers)
+        scan = self.scans.get(port)
+        self.receiver = scan.receiver if scan is not None else None
         if self.on_port_selected is not None:
             self.on_port_selected(port)
-        if port and port != self.settings.port:
-            self.settings.port = port
-            self._settings_changed()
+        self._update_buttons()
+
+    def _receiver_toggled(self) -> None:
+        port = self.selected_port
+        if not port:
+            self.enabled_var.set(False)
+            self._set_status("Choose a receiver port before enabling it.", error=True)
+            return
+        if self.enabled_var.get():
+            value = self.group_var.get()
+            self.settings.receivers[port] = None if value == "Auto" else int(value)
+        else:
+            self.settings.receivers.pop(port, None)
+        if self.on_port_selected is not None:
+            self.on_port_selected(port)
+        self._settings_changed()
 
     def _group_changed(self, _event=None) -> None:
         value = self.group_var.get()
         group = None if value == "Auto" else int(value)
-        if group != self.settings.group:
-            self.settings.group = group
+        if self.selected_port in self.settings.receivers and group != self.settings.receivers[self.selected_port]:
+            self.settings.receivers[self.selected_port] = group
             self._settings_changed()
 
     def _settings_changed(self) -> None:
         self.dirty = True
+        self.scans, self.scan_errors, self._device_ports = {}, {}, {}
         self.transmitters = self.receiver = None
         self.redraw()
         self.scan()
@@ -484,34 +519,39 @@ class SetupWindow(tk.Toplevel):
             return
         self._end_identify("")
         self._stop_readings()
-        port, group = self.settings.port, self.settings.group
-        if not port:
-            self._set_status("Choose the receiver's COM port, then scan.", error=True)
+        receivers = dict(self.settings.receivers)
+        if not receivers:
+            self._set_status("Choose a COM port and check Use this receiver, then scan.", error=True)
             return
         self.scanning = True
+        self.scans, self.scan_errors, self._device_ports = {}, {}, {}
         self.transmitters = self.receiver = None
         self._select(None)
         self.scan_button.configure(state="disabled", text="Scanning...")
-        self._set_status(f"Scanning {port}... U-WAVEPAK must be closed.")
+        self._set_status(
+            f"Scanning {', '.join(receivers)}... Close USB U-WAVEPAK; keep U-WAVEPAK-BW running for Bluetooth.",
+        )
         threading.Thread(
-            target=self._scan_worker, args=(self.open_transport, self._results, port, group),
+            target=self._scan_worker, args=(self.open_transport, self._results, receivers),
             name="uwave-scan", daemon=True,
         ).start()
         self._poll_id = self.after(50, self._poll_scan)
 
     @staticmethod
     def _scan_worker(
-        open_transport: Callable[[str], Transport], results: queue.Queue, port: str, group: int | None,
+        open_transport: Callable[[str], Transport], results: queue.Queue, receivers: dict[str, int | None],
     ) -> None:
-        try:
-            with PORT_LOCK:
-                result = scan_receiver(open_transport, port, group)
-        except ReceiverError as error:
-            result = error
-        except Exception as error:  # a worker exception would otherwise leave the window "Scanning" forever
-            logger.exception("U-WAVE receiver scan failed")
-            result = error
-        results.put(((port, group), result))
+        scans: dict[str, ScanResult | Exception] = {}
+        for port, group in receivers.items():
+            try:
+                with PORT_LOCK:
+                    scans[port] = scan_receiver(open_transport, port, group)
+            except ReceiverError as error:
+                scans[port] = error
+            except Exception as error:  # deliver worker failures to the UI rather than leave it waiting
+                logger.exception("U-WAVE receiver scan failed on %s", port)
+                scans[port] = error
+        results.put((receivers, scans))
 
     def _poll_scan(self) -> None:
         try:
@@ -521,20 +561,31 @@ class SetupWindow(tk.Toplevel):
             return
         self._poll_id = None
         self.scanning = False
-        self.scan_button.configure(state="normal", text="Scan Receiver")
-        if requested != (self.settings.port, self.settings.group):
+        self.scan_button.configure(state="normal", text="Scan Receivers")
+        if requested != self.settings.receivers:
             self.scan()
             return
-        if isinstance(result, Exception):
-            self._set_status(f"Scan failed: {result}", error=True)
-            self._update_buttons()
-            return
-        self.receiver, self.transmitters = result.receiver, result.transmitters
+        self.scans = {port: scan for port, scan in result.items() if isinstance(scan, ScanResult)}
+        self.scan_errors = {port: str(error) for port, error in result.items() if isinstance(error, Exception)}
+        locations: dict[str, list[str]] = {}
+        for port, scan in self.scans.items():
+            for info in scan.transmitters:
+                locations.setdefault(info.device_id, []).append(port)
+        self._device_ports = {device: ports[0] for device, ports in locations.items() if len(ports) == 1}
+        for device, ports in locations.items():
+            if len(ports) > 1:
+                self.scan_errors[f"ID {device}"] = f"registered on multiple receivers ({', '.join(ports)}); not usable"
+        self.transmitters = [
+            info for scan in self.scans.values() for info in scan.transmitters if info.device_id in self._device_ports
+        ] if self.scans else None
+        selected = self.scans.get(self.selected_port)
+        self.receiver = selected.receiver if selected is not None else None
         before = dict(self.settings.links)
-        self.settings.update_addresses(self.transmitters)
+        for port in self.scans:
+            self.settings.update_addresses(self._transmitters_on(port), port)
         self.dirty |= self.settings.links != before
         self.redraw()
-        self._set_status(self._summary())
+        self._set_status(self._summary(), error=bool(self.scan_errors))
         self.read_values()
 
     # Values and identification ---------------------------------------------
@@ -546,8 +597,12 @@ class SetupWindow(tk.Toplevel):
         """
         if not self._can_use_receiver():
             return
-        channels = _event_channels(self.transmitters)
-        if not channels:
+        requests = [
+            (port, scan.receiver.group, _event_channels(self._transmitters_on(port)))
+            for port, scan in self.scans.items()
+        ]
+        requests = [item for item in requests if item[2]]
+        if not requests:
             self._set_live(
                 "No connected transmitter is Event driven, so the receiver keeps no values to read. "
                 "Select an asset and click Identify, then press its DATA button.",
@@ -558,7 +613,7 @@ class SetupWindow(tk.Toplevel):
         self._reading_results = results = queue.Queue()
         threading.Thread(
             target=self._reading_worker,
-            args=(self.open_transport, results, self.settings.port, self.receiver.group, channels, cancel),
+            args=(self.open_transport, results, requests, cancel),
             name="uwave-readings", daemon=True,
         ).start()
         self._reading_poll_id = self.after(50, self._poll_readings)
@@ -566,20 +621,22 @@ class SetupWindow(tk.Toplevel):
 
     @staticmethod
     def _reading_worker(
-        open_transport: Callable[[str], Transport], results: queue.Queue, port: str, group: int,
-        channels: dict[str, int], cancel: threading.Event,
+        open_transport: Callable[[str], Transport], results: queue.Queue,
+        requests: list[tuple[str, int, dict[str, int]]], cancel: threading.Event,
     ) -> None:
-        try:
-            with PORT_LOCK:
-                result = {} if cancel.is_set() else read_latest_values(
-                    open_transport, port, group, channels, cancel=cancel,
-                )
-        except ReceiverError as error:
-            result = error
-        except Exception as error:  # a worker exception would otherwise leave the window "Reading" forever
-            logger.exception("U-WAVE value request failed")
-            result = error
-        results.put(result)
+        values: dict[str, LatestReading | ReceiverError] = {}
+        for port, group, channels in requests:
+            try:
+                with PORT_LOCK:
+                    if cancel.is_set():
+                        break
+                    values.update(read_latest_values(open_transport, port, group, channels, cancel=cancel))
+            except ReceiverError as error:
+                values.update({device: error for device in channels})
+            except Exception as error:
+                logger.exception("U-WAVE value request failed on %s", port)
+                values.update({device: ReceiverError(f"{port}: {error}") for device in channels})
+        results.put(values)
 
     def _poll_readings(self) -> None:
         if self._drag is not None:  # a redraw now would erase the drag line
@@ -610,6 +667,12 @@ class SetupWindow(tk.Toplevel):
             )
         else:
             self._set_live(f"No values changed since the last read ({datetime.now():%H:%M:%S}).")
+        failures = [
+            f"{self._channel_label(device)}: {error}" for device, error in result.items()
+            if isinstance(error, ReceiverError)
+        ]
+        if failures:
+            self._set_live(self.live_var.get() + " Unavailable: " + "; ".join(failures), error=True)
         self.redraw()
 
     def _take_values(self, values: dict[str, LatestReading | ReceiverError]) -> dict[str, object]:
@@ -668,9 +731,13 @@ class SetupWindow(tk.Toplevel):
     def _start_identify(self, targets: list[str], *, guided: bool) -> None:
         if not self._can_use_receiver():
             return
-        event_channels = _event_channels(self.transmitters)
+        if self.receiver is None:
+            self._set_live("Enable and scan the selected receiver before identifying instruments.", error=True)
+            return
+        transmitters = self._transmitters_on(self.selected_port)
+        event_channels = _event_channels(transmitters)
         button_channels = {
-            info.channel: info.device_id for info in self.transmitters
+            info.channel: info.device_id for info in transmitters
             if info.state == TransmitterState.CONNECTED and info.mode == MeasurementMode.BUTTON_DRIVEN
             and info.channel is not None
         }
@@ -686,7 +753,7 @@ class SetupWindow(tk.Toplevel):
         threading.Thread(
             target=watch_for_responses,
             args=(
-                self.open_transport, self.settings.port, self.receiver.group, event_channels, button_channels,
+                self.open_transport, self.selected_port, self.receiver.group, event_channels, button_channels,
                 session.results, session.stop, session.wake, self.identify_interval,
             ),
             name="uwave-identify", daemon=True,
@@ -863,6 +930,8 @@ class SetupWindow(tk.Toplevel):
                 f"Identify {tag}{count}: {action}. Leave the other instruments alone. "
                 f"{max(math.ceil(remaining), 0)} s left."
             )
+        if len(self.settings.receivers) > 1:
+            text += f" Receiver: {self.selected_port}."
         if self.identify_var.get() != text:
             self.identify_var.set(text)
 
@@ -885,16 +954,20 @@ class SetupWindow(tk.Toplevel):
     def _can_use_receiver(self) -> bool:
         return (
             not self.scanning and not self._reading and self._identify is None and bool(self.transmitters)
-            and self.receiver is not None and self.settings.port is not None
+            and bool(self.scans)
         )
+
+    def _transmitters_on(self, port: str | None) -> list[TransmitterInfo]:
+        return [info for info in self.transmitters or () if self._device_ports.get(info.device_id) == port]
 
     def _update_buttons(self) -> None:
         ready = self._can_use_receiver()
         self.read_button.configure(
             state="normal" if ready else "disabled", text="Reading..." if self._reading else "Read Values",
         )
-        self.identify_button.configure(state="normal" if ready and self._selected_asset() else "disabled")
-        self.link_all_button.configure(state="normal" if ready and any(
+        identify_ready = ready and self.receiver is not None
+        self.identify_button.configure(state="normal" if identify_ready and self._selected_asset() else "disabled")
+        self.link_all_button.configure(state="normal" if identify_ready and any(
             asset.asset_id not in self.settings.links for asset in self._visible_assets()
         ) else "disabled")
         self.unlink_button.configure(state="normal" if self._selected_link_asset() else "disabled")
@@ -912,16 +985,22 @@ class SetupWindow(tk.Toplevel):
     def _channel_label(self, device_id: str, *, linked: bool = True) -> str:
         info = next((item for item in self.transmitters or () if item.device_id == device_id), None)
         label = f"CH {info.channel:02d}" if info is not None and info.channel is not None else f"ID {device_id}"
+        if len(self.settings.receivers) > 1 and device_id in self._device_ports:
+            label = f"{self._device_ports[device_id]} {label}"
         link = self.settings.link_for_device(device_id) if linked else None
         return f"{label} ({link.asset_label})" if link else label
 
     def _summary(self) -> str:
         parts = []
-        if self.receiver is not None:
-            detected = " (detected)" if self.settings.group is None else ""
-            parts.append(f"Receiver {self.receiver.device_id}, group {self.receiver.group:02d}{detected}")
-            if self.receiver.duplicate_detected:
-                parts.append("another receiver nearby uses the same group and band")
+        for port, scan in self.scans.items():
+            receiver = scan.receiver
+            detected = " (detected)" if self.settings.receivers[port] is None else ""
+            parts.append(f"{port}: Receiver {receiver.device_id}, group {receiver.group:02d}{detected}")
+            if receiver.duplicate_detected:
+                parts.append(f"{port}: another receiver nearby uses the same group and band")
+        if self.scan_errors:
+            problems = "; ".join(f"{port}: {error}" for port, error in self.scan_errors.items())
+            parts.append(f"Scan failed: {problems}")
         if self.transmitters is not None:
             parts.append(f"{len(self.transmitters)} transmitter{'s' * (len(self.transmitters) != 1)}")
         linked = sum(asset.asset_id in self.settings.links for asset in self.assets)
@@ -948,7 +1027,7 @@ class SetupWindow(tk.Toplevel):
             )
         ):
             return False
-        replaced = self.settings.link(asset_id, asset.tag, info)
+        replaced = self.settings.link(asset_id, asset.tag, info, self._device_ports[device_id])
         self.dirty = True
         check = check_link(self.settings.links[asset_id], self.transmitters)
         message = f"Linked {asset.tag} to channel {info.channel:02d} (transmitter {info.device_id})."
@@ -961,7 +1040,7 @@ class SetupWindow(tk.Toplevel):
         self._selected = ("link", asset_id)
         self.redraw()
         self._set_hint(message, warning=not check.usable)
-        self._set_status(self._summary())
+        self._set_status(self._summary(), error=bool(self.scan_errors))
         return True
 
     def unlink_selected(self) -> None:
@@ -974,7 +1053,7 @@ class SetupWindow(tk.Toplevel):
         self._selected = None if key and key[0] == "link" else key
         self.redraw()
         self._set_hint(f"Unlinked {link.asset_label} from transmitter {link.device_id}.")
-        self._set_status(self._summary())
+        self._set_status(self._summary(), error=bool(self.scan_errors))
 
     def _selected_link_asset(self) -> str | None:
         key = self._selected
@@ -1087,8 +1166,8 @@ class SetupWindow(tk.Toplevel):
         rows = self._transmitter_rows(visible)
         if not rows:
             empty = (
-                "Choose the receiver's port and scan to list its transmitters." if self.transmitters is None
-                else "No transmitters are registered in this receiver. Register them in U-WAVEPAK Setup."
+                "Enable receiver ports and scan to list their transmitters." if self.transmitters is None
+                else "No usable transmitters found. Check the scan status and registrations in U-WAVEPAK."
             )
             canvas.create_text(left, y_left, anchor="nw", width=card_width, text=empty, fill=MUTED, font=self._font)
         for key, info, link in rows:
@@ -1156,9 +1235,10 @@ class SetupWindow(tk.Toplevel):
         if info is None:
             channel = "--" if ghost_link.channel is None else f"{ghost_link.channel:02d}"
             status = (
-                ("Not scanned yet", GRAY) if self.transmitters is None else ("Not found in this receiver", RED)
+                ("Not scanned yet", GRAY) if self.transmitters is None else ("Not found in scanned receivers", RED)
             )
-            return f"ID {ghost_link.device_id}", f"Linked to {ghost_link.asset_label} · last on CH {channel}", *status, True
+            port = f" ({ghost_link.port})" if ghost_link.port else ""
+            return f"ID {ghost_link.device_id}", f"Linked to {ghost_link.asset_label}{port} · last CH {channel}", *status, True
         link = self.settings.link_for_device(info.device_id)
         if link is None:
             linked = "Not linked"
@@ -1166,6 +1246,8 @@ class SetupWindow(tk.Toplevel):
             linked = f"Linked to {link.asset_label}"
         else:
             linked = f"Linked to {link.asset_label} (not in this list)"
+        if len(self.settings.receivers) > 1:
+            linked = f"{self._device_ports[info.device_id]} · {linked}"
         if info.state == TransmitterState.CONNECTED and info.mode == MeasurementMode.EVENT_DRIVEN:
             status = ("Connected · Event driven", GREEN)
         elif info.state == TransmitterState.CONNECTED:
@@ -1203,6 +1285,9 @@ class SetupWindow(tk.Toplevel):
         label, color = _STATE_STYLE[check.state]
         channel = check.transmitter.channel if check.transmitter else link.channel
         prefix = "" if channel is None else f"CH {channel:02d} · "
+        port = self.settings.port_for_link(link)
+        if len(self.settings.receivers) > 1 and port is not None:
+            prefix = f"{port} · {prefix}"
         return asset.tag or asset.asset_id, subtitle, prefix + label, color, False
 
     def _draw_card(

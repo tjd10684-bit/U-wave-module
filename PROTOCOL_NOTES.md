@@ -189,6 +189,15 @@ connections. Test driver coexistence, COM-port behavior, independent routing,
 reconnect behavior, and acquisition under load before enabling mixed operation.
 Do not uninstall functioning software just to explore this hypothesis.
 
+The 0.2.0 helper has now exercised IR discovery and DR latest-value capture
+through both a USB receiver and BW 1.0.5 on one Windows 11 workstation.
+Its setup enables both ports, labels their transmitters, and stores the receiver
+port with each asset link. Capture opens only that asset's port and rechecks its
+Device ID. Read Values requests all enabled routes sequentially; this does not
+claim synchronized sampling, native BLE, or complete legacy-command support in
+BW. Reconnection, sustained load and a broader model/firmware matrix still need
+validation.
+
 ## 3. Foot-switch options
 
 Mitutoyo offers U-WAVE connecting cables with foot-switch ports, including the

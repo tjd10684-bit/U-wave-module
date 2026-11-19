@@ -1,5 +1,24 @@
 # Project handoff
 
+Updated 2026-11-18: **unreleased local tester 0.2.0** adds multiple enabled
+receiver ports, per-port groups and port-bound asset links. Scan Receivers and
+Read Values cover all enabled receivers; partial failures are explicit.
+Capture still reads one selected asset, opening only its bound port and
+revalidating Device ID. Identify/Link All stay scoped to the selected receiver.
+Schema 1 loads without modification; Save writes schema 2. Keep the pre-upgrade
+settings backup for rollback to 0.1.1.
+
+Validation this session: **60 focused tests passed, no skips** across links,
+module and setup-window tests; `pip check` and frozen-helper `host_check` passed.
+The packaged helper repeatedly captured from USB U-WAVE-R and Bluetooth through
+U-WAVEPAK-BW 1.0.5 in the same process, without changing settings between captures.
+A disconnected Bluetooth instrument was explicitly rejected until awakened.
+The owner installed the tested package in Open ERP 0.2.12 and reported both
+readings in setup; the installed executable hash and saved two-port routing were
+verified. Shop identities, readings, backups and logs remain outside this repo.
+Pre-commit full-suite validation also passed: **130 tests, no skips** using
+`python -m pytest tests -q -rs`. The 0.2.0 package is not a published release.
+
 Updated 2026-11-18: tester release **v0.1.1** (a normal release, marked latest) is published at
 <https://github.com/tjd10684-bit/U-wave-module/releases/tag/v0.1.1> with
 `mitutoyo-u-wave-0.1.1.zip` (10,931,899 bytes, SHA256
@@ -76,7 +95,8 @@ The initial design discussion deferred implementation; subsequent work authorize
 the host-neutral Python package and visual setup window. The
 [version 1 contract](HOST_CONTRACT.md) narrows the initial workflow to one
 instrument per characteristic, including separate A/B actions on that same
-instrument. Two-instrument correction and Bluetooth remain future work.
+instrument. Two-instrument correction remains future work; Bluetooth via BW's
+virtual COM bridge is now included in the limited hardware validation above.
 
 ## Current implementation and next handoff
 
@@ -94,8 +114,9 @@ instrument. Two-instrument correction and Bluetooth remain future work.
   linked elsewhere link nothing. The receiver client passes unsolicited packets
   (forwarded DATA presses) to a callback and can listen without a request.
   Values come from the receiver's store, so reading does not wake transmitters.
-- One-to-one links use asset UUID and transmitter Device ID. Group/channel are
-  last-seen addresses, not identities. Settings are local to the Windows user
+- One-to-one links use asset UUID and transmitter Device ID with a saved receiver
+  port. Group/channel are last-seen addresses, not identities. A scan updates
+  routes only for unambiguous Device IDs. Settings are local to the Windows user
   at `%LOCALAPPDATA%\UWaveAccessory\links.json`, not shared ERP inventory.
 - A simulator, serial loopback tests and Tkinter tests exercise software without
   physical equipment. The demo has sample assets and uses a separate settings
@@ -109,7 +130,7 @@ instrument. Two-instrument correction and Bluetooth remain future work.
 - The helper re-identifies the saved transmitter by Device ID within the
   capture deadline, follows its current channel, checks the acquisition mode,
   and returns the reported units and a stable transmitter source ID.
-  `build_module.ps1` produces `module/build/mitutoyo-u-wave-0.1.1.zip`.
+  `build_module.ps1` produces `module/build/mitutoyo-u-wave-0.2.0.zip`.
   The built module passed `host_check`, Open ERP's real module-manager install,
   setup-window launch, and simulator capture checks.
   The host supplies the asset list; the module does not query the ERP database.
@@ -137,8 +158,9 @@ instrument. Two-instrument correction and Bluetooth remain future work.
   because builds are not byte-reproducible. The bundle contains the public
   module/SDK, not private ERP source.
 
-The next task is **hardware verification**, not production inspection. No
-physical receiver or instrument was exercised by this implementation session.
+The next task is **extended hardware verification**, not production inspection:
+reconnects, power interruption, late replies and sustained mixed operation remain
+open beyond the basic two-route checks recorded above.
 Use the [module build instructions](README.md#build-and-try-the-open-erp-module)
 to build a tester package; do not copy this machine's virtual environment or
 settings.
@@ -224,8 +246,9 @@ workstation into a new installation. Discover and confirm them locally.
    requirements. Do not copy an unrelated application's Python environment or
    local research tooling from the earlier session.
 6. Establish the vendor-tool baseline, then close legacy U-WAVEPAK and Data I/F.
-   Verify that the receiver has a working VCP driver and select that port in the
-   standalone window. Do not pick a COM port just because it is first in the list.
+   Keep U-WAVEPAK-BW running for Bluetooth. Verify each receiver's VCP driver,
+   select its port and check Use this receiver in setup. Do not pick a COM port
+   just because it is first in the list.
 7. Prefer the receiver's known Group ID for the first scan. Compare receiver and
    transmitter identities, channels, modes and connected/disconnected states
    against U-WAVEPAK's recorded setup. Rescan after reconnecting.
@@ -240,7 +263,7 @@ workstation into a new installation. Discover and confirm them locally.
    threshold is applied).
 10. Perform the relevant [validation checks](VALIDATION_PLAN.md). Do not enable
     production capture until request correlation, reconnection and source
-    verification are sound. Bluetooth/mixed operation needs separate work.
+    verification are sound. Mixed-operation stress and reconnect checks remain.
 
 At each handoff, update the supported model/version matrix, decisions, unresolved
 questions, and exact verified development commands in the repository. Keep local
@@ -265,8 +288,9 @@ serial numbers, COM assignments, operator data, and logs out of committed exampl
   arrives after the next request begins. IR search replies also cannot be
   distinguished from some unsolicited TI changes. These are unresolved limits,
   not guarantees supplied by the simulator.
-- Future multi-instrument sampling relationship and transport-qualified source
-  identity when more than one receiver/transport is supported.
+- Future paired-capture sampling relationship. Current routing is by saved
+  receiver port and verified transmitter Device ID, not channel alone.
 - Pedal model, trigger binding, duplicate-trigger handling, and supported
   application-focus behavior.
-- Whether mixed Bluetooth and U-WAVE-R operation is supported on the target PCs.
+- Whether the basic mixed Bluetooth/U-WAVE-R results extend to other target PCs,
+  adapters and firmware, and whether reconnect/load behavior is reliable.

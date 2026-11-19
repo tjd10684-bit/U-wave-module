@@ -1,4 +1,4 @@
-"""Open ERP helper module for Mitutoyo U-WAVE-R receivers."""
+"""Open ERP helper module for Mitutoyo U-WAVE receiver ports."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import time
 import tkinter as tk
 
 from open_erp_module import CaptureRequest, Context, Equipment, Module, ModuleError, Reading
-from uwave_accessory.links import ConfigError, ConfigStore, Link, check_link
+from uwave_accessory.links import AccessoryConfig, ConfigError, ConfigStore, check_link
 from uwave_accessory.receiver import ReceiverClient, ReceiverError
 from uwave_accessory.serial_transport import PortInfo, SerialTransport, TransportError
 from uwave_accessory.setup_window import (
@@ -22,14 +22,13 @@ _ERROR = 1001
 class UWaveModule(Module):
     module_id = "mitutoyo-u-wave"
     name = "Mitutoyo U-WAVE"
-    version = "0.1.1"
+    version = "0.2.0"
     acquisition_mode = "latest"
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._store: ConfigStore | None = None
-        self._links: dict[str, Link] = {}
-        self._port: str | None = None
+        self._config = AccessoryConfig()
         self._simulator = demo_receiver()
 
     def initialize(self, context: Context) -> None:
@@ -39,26 +38,33 @@ class UWaveModule(Module):
         except ConfigError as error:
             raise ModuleError(f"Could not load U-WAVE settings: {error}", _ERROR) from error
         with self._lock:
-            self._links = dict(config.links)
-            self._port = config.port
-        if self._links and self._port:
-            self.report_status("ready", f"{len(self._links)} transmitter link(s) loaded.")
+            self._config = config
+        if config.links and config.receivers:
+            self.report_status("ready", f"{len(config.links)} transmitter link(s) loaded.")
         else:
             self.report_status("warning", "Open Setup to choose a receiver and link its transmitters to assets.")
 
     def linked_assets(self) -> list[str]:
         with self._lock:
-            return list(self._links)
+            return list(self._config.links)
 
     def capture(self, request: CaptureRequest) -> Reading:
         with self._lock:
-            link = self._links.get(request.asset_id)
-            port = self._port
+            config = self._config
+            link = config.links.get(request.asset_id)
         if link is None:
             raise ModuleError("This asset is not linked to a U-WAVE transmitter. Open Setup to link it.", _ERROR)
-        if not port:
+        if not config.receivers:
             raise ModuleError("Choose the U-WAVE receiver port in Open Setup before capturing.", _ERROR)
-        if link.group is None:
+        port = config.port_for_link(link)
+        if port is None:
+            raise ModuleError("Rescan and save in Open Setup to assign this transmitter to a receiver.", _ERROR)
+        if port not in config.receivers:
+            raise ModuleError(f"The linked receiver {port} is not enabled. Enable it in Open Setup.", _ERROR)
+        group = config.receivers[port]
+        if group is None:
+            group = link.group
+        if group is None:
             raise ModuleError("The saved transmitter link has no receiver group. Rescan and save it in Open Setup.", _ERROR)
         if request.cancelled.is_set():
             raise ModuleError("The U-WAVE capture was cancelled.", _ERROR)
@@ -71,7 +77,7 @@ class UWaveModule(Module):
             if request.cancelled.is_set():
                 raise ModuleError("The U-WAVE capture was cancelled.", _ERROR)
             transport = self._open_transport(port)
-            client = ReceiverClient(transport, link.group)
+            client = ReceiverClient(transport, group)
             transmitter = client.find_transmitter(link.device_id, self._remaining(deadline))
             checked = check_link(link, [transmitter])
             if not checked.usable:
@@ -82,7 +88,9 @@ class UWaveModule(Module):
                 raise ModuleError("The U-WAVE capture was cancelled.", _ERROR)
             reading = client.request_latest(transmitter.channel, self._remaining(deadline))
         except ReceiverError as error:
-            raise ModuleError(f"U-WAVE capture failed for {link.asset_label or request.asset_id}: {error}", _ERROR) from error
+            raise ModuleError(
+                f"U-WAVE capture failed on {port} for {link.asset_label or request.asset_id}: {error}", _ERROR,
+            ) from error
         finally:
             try:
                 if transport is not None:
@@ -116,7 +124,7 @@ class UWaveModule(Module):
             nonlocal demo
             if window is None:
                 return
-            if port == DEMO_PORT:
+            if DEMO_PORT in window.settings.receivers:
                 if demo is None or not demo.winfo_exists():
                     demo = DemoInstruments(window, self._simulator)
                 else:
@@ -136,7 +144,7 @@ class UWaveModule(Module):
                 title="Mitutoyo U-WAVE Setup",
                 on_port_selected=port_selected,
             )
-            port_selected(window.settings.port)
+            port_selected(window.selected_port)
             window.run()
             if window.saved:
                 try:
@@ -144,12 +152,11 @@ class UWaveModule(Module):
                 except ConfigError as error:
                     raise ModuleError(f"Could not reload U-WAVE settings: {error}", _ERROR) from error
                 with self._lock:
-                    self._links = dict(config.links)
-                    self._port = config.port
-                if self._links:
-                    self.report_status("ready", f"{len(self._links)} transmitter link(s) configured.")
+                    self._config = config
+                if config.links and config.receivers:
+                    self.report_status("ready", f"{len(config.links)} transmitter link(s) configured.")
                 else:
-                    self.report_status("warning", "No U-WAVE transmitters are linked to assets.")
+                    self.report_status("warning", "Enable a receiver and link its transmitters in Open Setup.")
         finally:
             root.destroy()
 

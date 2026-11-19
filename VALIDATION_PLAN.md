@@ -1,8 +1,18 @@
 # Validation plan
 
-Updated 2026-11-16. Automated tests now exercise the implemented software with
+Updated 2026-11-18. Automated tests exercise the implemented software with
 synthetic devices, serial loopback and Tkinter. A case listed below is not
-automatically covered. There are **no hardware-validated configurations** yet.
+automatically covered. Basic USB plus BW-bridge operation has now been exercised
+on one workstation; this is not a general production qualification.
+
+Multi-receiver 0.2.0 focused result: **60 passed, no skips** using
+`python -m pytest tests\test_links.py tests\test_module.py tests\test_setup_window.py -q -rs`.
+The frozen helper passed SDK `host_check` and repeated real-hardware Capture
+requests for assets on both receiver ports within one process. A disconnected
+Bluetooth instrument was rejected, then captured after being awakened. The
+owner also confirmed both readings in the installed setup window; saved routing
+and installed executable identity were checked. Pre-commit full-suite validation
+then passed: **130 tests, no skips**, using `python -m pytest tests -q -rs`.
 
 Run the complete accessory suite from the checkout:
 
@@ -65,12 +75,18 @@ not needed by the initial integration.
 | [Packet codec](tests/test_protocol.py) | Literal DT/ST/TI/RI fixtures, DR/IR field ordering, malformed/unit rejection, fragmented and concatenated stream reads |
 | [Receiver client](tests/test_receiver.py) | Requested-channel routing, ST failures, TI changes, discovery, wrong-group errors and timeouts; late data drained before the next request; unsolicited packets passed to a listener, malformed ones skipped |
 | [Serial transport](tests/test_serial_transport.py) | Synthetic loopback reads/timeouts, unavailable-port errors and port ordering; no vendor driver exercised |
-| [Links](tests/test_links.py) | One-to-one mapping, Device ID rather than channel identity, scan states, persisted settings and invalid-file rejection |
+| [Links](tests/test_links.py) | One-to-one mapping, Device ID rather than channel identity, schema 1 migration, multi-receiver persistence, unresolved-route refusal and invalid-file rejection |
+| [Module capture](tests/test_module.py) | Selected-asset routing when ports share group/channel, unavailable unrelated receiver, wrong transmitter refusal, disabled/unresolved receiver errors and existing capture safeguards |
 | [Setup GUI](tests/test_setup_window.py) | Left/right asset layout, deduplication, optional balloon labels, drag/click linking, unlinking, missing-source cards, save/discard, failed rescans and closing while scanning; Read Values change reporting; Identify and Link All by simulated reading change or DATA press, ambiguous or linked-elsewhere responders, answers queued before an asset was asked for, Skip, hand links, timeouts and closing mid-identify |
+
+Multi-receiver GUI cases also cover enabling/reading both ports, saving routes,
+partial failure without stale successful values, duplicate Device IDs across
+ports, selected-port identification and retaining links when disabling a receiver.
 
 Still open: replies arriving after a new request begins, physical sample age,
 real connection/reconnection guarantees, host capture cancellation/pedal flow,
-multi-instrument completeness, approved unit conversion and mixed transports.
+multi-instrument completeness, approved unit conversion and mixed-transport
+stress/reconnection behavior.
 The simulator assumes inclusive IR searches; it cannot prove that behavior.
 
 ## Stage 3: single legacy receiver on real hardware
@@ -147,10 +163,15 @@ different situations even if neither has just produced a new value.
 - Verify Event driven updates, unchanged readings, and first data after reconnect.
 - Keep BW running while preventing duplicate direct keyboard output.
 - Independently test legacy/Bluetooth coexistence before claiming mixed support.
-- Capture a pair spanning both transports, with one route delayed or unavailable,
-  and apply the same completeness and identity checks.
+- Verify selected-asset captures on each route while the other is unavailable.
+- A single Capture returning a pair spanning both transports remains future
+  scope; apply completeness and identity checks when that workflow is approved.
 
 ## Supported-configuration record
+
+| Configuration exercised on 2026-11-18 | Evidence | Still unverified |
+| --- | --- | --- |
+| Windows 11 Pro x64; USB U-WAVE-R with Mitutoyo VCP 2.12.28; Bluetooth U-WAVE through U-WAVEPAK-BW 1.0.5; Event driven; module 0.2.0 | Discovery, setup Read Values, repeated one-asset captures on both ports through the packaged helper, exact asset/source/unit response checks | Exact Bluetooth model/firmware matrix, restart/sleep recovery, sustained load, late replies, physical freshness, synchronized or paired capture, full ERP inspection/pedal acceptance |
 
 When evidence exists, maintain a small table containing:
 

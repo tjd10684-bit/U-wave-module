@@ -10,7 +10,7 @@ that PC's receiver.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 import json
 import os
@@ -20,7 +20,7 @@ from typing import Iterable
 
 from .protocol import MeasurementMode, TransmitterInfo, TransmitterState, is_device_id
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class ConfigError(RuntimeError):
@@ -34,6 +34,7 @@ class Link:
     device_id: str
     channel: int | None  # last seen address, not identity
     group: int | None
+    port: str | None = None  # schema 1 links acquire a port on their next successful scan
 
     def __post_init__(self) -> None:
         if not isinstance(self.asset_id, str) or not self.asset_id.strip():
@@ -42,6 +43,8 @@ class Link:
             raise ValueError("asset_label must be a string")
         if not is_device_id(self.device_id):
             raise ValueError(f"invalid device ID {self.device_id!r}")
+        if self.port is not None and (not isinstance(self.port, str) or not self.port.strip()):
+            raise ValueError("link port must be a non-empty string or null")
         for value, name in ((self.channel, "channel"), (self.group, "group")):
             if value is not None and (isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 99):
                 raise ValueError(f"{name} must be 0-99 or null, got {value!r}")
@@ -49,16 +52,17 @@ class Link:
 
 @dataclass
 class AccessoryConfig:
-    port: str | None = None
-    group: int | None = None  # None: detect the receiver's group on each scan
+    receivers: dict[str, int | None] = field(default_factory=dict)  # port -> group; None: auto detect
     links: dict[str, Link] = field(default_factory=dict)  # keyed by asset_id
 
     def link_for_device(self, device_id: str) -> Link | None:
         return next((link for link in self.links.values() if link.device_id == device_id), None)
 
-    def link(self, asset_id: str, asset_label: str, transmitter: TransmitterInfo) -> list[Link]:
+    def link(
+        self, asset_id: str, asset_label: str, transmitter: TransmitterInfo, port: str | None = None,
+    ) -> list[Link]:
         """Link an asset to a transmitter, replacing either side's old link; return the replaced links."""
-        new = Link(asset_id, asset_label, transmitter.device_id, transmitter.channel, transmitter.group)
+        new = Link(asset_id, asset_label, transmitter.device_id, transmitter.channel, transmitter.group, port)
         replaced = [
             link for link in self.links.values()
             if link.asset_id == asset_id or link.device_id == transmitter.device_id
@@ -71,13 +75,21 @@ class AccessoryConfig:
     def unlink(self, asset_id: str) -> Link | None:
         return self.links.pop(asset_id, None)
 
-    def update_addresses(self, transmitters: Iterable[TransmitterInfo]) -> None:
+    def update_addresses(self, transmitters: Iterable[TransmitterInfo], port: str | None = None) -> None:
         """Record where linked transmitters were last seen."""
         by_device = {transmitter.device_id: transmitter for transmitter in transmitters}
         for asset_id, link in list(self.links.items()):
             found = by_device.get(link.device_id)
-            if found is not None and (found.channel, found.group) != (link.channel, link.group):
-                self.links[asset_id] = Link(link.asset_id, link.asset_label, link.device_id, found.channel, found.group)
+            if found is not None:
+                self.links[asset_id] = replace(
+                    link, channel=found.channel, group=found.group, port=port if port is not None else link.port,
+                )
+
+    def port_for_link(self, link: Link) -> str | None:
+        if link.port is not None:
+            return link.port
+        # Preserve schema 1 capture until a scan binds the link. Never guess among several receivers.
+        return next(iter(self.receivers)) if len(self.receivers) == 1 else None
 
 
 class LinkState(Enum):
@@ -140,28 +152,39 @@ class ConfigStore:
             raise ConfigError(f"Could not read {self.path}: {error}") from error
         try:
             data = json.loads(text)
-            if data.get("schema") != SCHEMA_VERSION:
-                raise ValueError(f"unsupported schema {data.get('schema')!r}")
-            receiver = data.get("receiver", {})
-            port, group = receiver.get("port"), receiver.get("group")
-            if port is not None and not isinstance(port, str):
-                raise ValueError("receiver port must be a string")
-            if group is not None and (isinstance(group, bool) or not isinstance(group, int) or not 0 <= group <= 99):
-                raise ValueError("receiver group must be 0-99 or null")
-            config = AccessoryConfig(port, group)
+            schema = data.get("schema")
+            if type(schema) is not int or schema not in (1, SCHEMA_VERSION):
+                raise ValueError(f"unsupported schema {schema!r}")
+            receivers = [data.get("receiver", {})] if schema == 1 else data["receivers"]
+            if not isinstance(receivers, list):
+                raise ValueError("receivers must be a list")
+            config = AccessoryConfig()
+            seen_ports: set[str] = set()
+            for receiver in receivers:
+                port, group = receiver.get("port"), receiver.get("group")
+                if group is not None and (isinstance(group, bool) or not isinstance(group, int) or not 0 <= group <= 99):
+                    raise ValueError("receiver group must be 0-99 or null")
+                if port is None and schema == 1:
+                    continue
+                if not isinstance(port, str) or not port.strip():
+                    raise ValueError("receiver port must be a non-empty string")
+                if port.casefold() in seen_ports:
+                    raise ValueError(f"duplicate receiver port {port}")
+                seen_ports.add(port.casefold())
+                config.receivers[port] = group
             for item in data.get("links", []):
                 link = Link(**item)
                 if link.asset_id in config.links or config.link_for_device(link.device_id):
                     raise ValueError(f"duplicate link for asset {link.asset_id} or device {link.device_id}")
                 config.links[link.asset_id] = link
-        except (AttributeError, TypeError, ValueError) as error:
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
             raise ConfigError(f"{self.path} is not a valid U-WAVE settings file: {error}") from error
         return config
 
     def save(self, config: AccessoryConfig) -> None:
         data = {
             "schema": SCHEMA_VERSION,
-            "receiver": {"port": config.port, "group": config.group},
+            "receivers": [{"port": port, "group": group} for port, group in config.receivers.items()],
             "links": [asdict(link) for link in sorted(config.links.values(), key=lambda link: link.asset_label)],
         }
         try:

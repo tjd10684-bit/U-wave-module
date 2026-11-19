@@ -50,8 +50,8 @@ def test_link_check_revalidates_against_the_latest_scan(scan, state):
 def test_store_round_trips_and_treats_a_missing_file_as_empty(tmp_path):
     store = ConfigStore(tmp_path / "nested" / "links.json")
     assert store.load() == AccessoryConfig()
-    config = AccessoryConfig("COM5", None)
-    config.link("a1", "CAL-1", transmitter(3, "0000000001"))
+    config = AccessoryConfig({"COM5": None, "COM6": 7})
+    config.link("a1", "CAL-1", transmitter(3, "0000000001"), "COM6")
     store.save(config)
     assert store.load() == config
     assert list((tmp_path / "nested").iterdir()) == [store.path]
@@ -59,7 +59,11 @@ def test_store_round_trips_and_treats_a_missing_file_as_empty(tmp_path):
 
 @pytest.mark.parametrize("text", [
     "not json",
+    json.dumps({"schema": 3}),
     json.dumps({"schema": 2}),
+    json.dumps({"schema": 2, "receivers": [{"port": "COM5"}, {"port": "com5"}]}),
+    json.dumps({"schema": 2, "receivers": [{"port": ""}]}),
+    json.dumps({"schema": 2, "receivers": [{"port": "COM5", "group": True}]}),
     json.dumps({"schema": 1, "receiver": {"group": 100}}),
     json.dumps({"schema": 1, "links": [{"asset_id": "a1", "asset_label": "", "device_id": "12", "channel": 1, "group": 1}]}),
     json.dumps({"schema": 1, "links": [
@@ -73,3 +77,23 @@ def test_store_refuses_invalid_files_without_touching_them(tmp_path, text):
     with pytest.raises(ConfigError):
         ConfigStore(path).load()
     assert path.read_text(encoding="utf-8") == text
+
+
+def test_legacy_settings_migrate_without_guessing_a_second_receiver(tmp_path):
+    store = ConfigStore(tmp_path / "links.json")
+    original = json.dumps({
+        "schema": 1, "receiver": {"port": "COM5", "group": None},
+        "links": [{"asset_id": "a1", "asset_label": "CAL-1", "device_id": "0000000001", "channel": 3, "group": 7}],
+    })
+    store.path.write_text(original, encoding="utf-8")
+    config = store.load()
+    assert store.path.read_text(encoding="utf-8") == original
+    assert config.receivers == {"COM5": None}
+    assert config.port_for_link(config.links["a1"]) == "COM5"
+    config.receivers["COM6"] = None
+    assert config.port_for_link(config.links["a1"]) is None
+    config.update_addresses([transmitter(5, "0000000001")], "COM6")
+    assert config.links["a1"] == Link("a1", "CAL-1", "0000000001", 5, 7, "COM6")
+    store.save(config)
+    assert json.loads(store.path.read_text(encoding="utf-8"))["schema"] == 2
+    assert store.load() == config

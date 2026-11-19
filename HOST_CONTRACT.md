@@ -11,6 +11,11 @@ registers the provider described below on their behalf, so the operator
 workflow and the host's reading-acceptance rules here apply to module readings
 too.
 
+Module 0.2.0 can manage several receiver ports without changing this contract:
+Read Values covers their instruments in setup, while each Capture still returns
+one selected asset's reading. The module owns receiver-port routing and
+transmitter re-identification; the host does not switch ports.
+
 ## Initial scope and operator workflow
 
 - One selected Metrology asset per characteristic. Indirect inputs A and B use
@@ -85,7 +90,8 @@ does not import Open ERP: it is a helper program that speaks
 and Open ERP's module host adapts it to
 this hook. No driver or vendor DLL is supplied by this contract. The experimental
 U-WAVE helper wraps the accessory's protocol/discovery client and setup window;
-physical hardware behavior remains unverified.
+limited hardware evidence is recorded in [VALIDATION_PLAN.md](VALIDATION_PLAN.md),
+without establishing physical freshness or general reconnection guarantees.
 
 ## Capture request
 
