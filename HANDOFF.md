@@ -1,5 +1,17 @@
 # Project handoff
 
+Updated 2026-11-22: **To do (owner, when at the hardware PC):**
+
+- **Test a real in-app module update.** On a PC with U-WAVE 0.1.1 or 0.2.0 installed, run Open ERP's
+  **Help > Check for Updates...** and confirm it offers 0.2.1, downloads and verifies it, installs it,
+  keeps the saved device links, and that capture works afterwards. This has never been done end to
+  end (the pieces are tested separately). 0.1.0 cannot update itself and needs the published zip
+  installed by hand once. Open ERP does the check, not the module: it reads `update_repository` from
+  each installed module's `module.toml` (the automatic check is at most once a day; a manual check
+  always runs; a missed day-check because the network was down is accepted behavior).
+- **Collect connection logs** for the slow-to-wake U-WAVE receiver and the Bluetooth module that
+  drops quickly (see the open decisions on timeouts and reconnect policy below).
+
 Updated 2026-11-19: **0.2.1** makes the setup window follow Open ERP's light/dark look
 (`theme.py`). **Handshake:** SDK 1.2.0 (tag `v1.2.0`, now pinned) adds an optional `theme` to
 `open_setup` (mode plus colours for sixteen neutral roles), exposed as `Module.host_theme`; the module
