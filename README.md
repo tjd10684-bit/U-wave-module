@@ -250,9 +250,36 @@ the agreed interface documentation. It does not contain private ERP source or
 internal integration patches, real device identities, shop settings, credentials,
 or copies of manufacturer manuals/software.
 
-Hardware selection, licensing and driver distribution remain open. Open ERP
+Hardware selection and driver distribution remain open. Open ERP
 installs measurement modules as separate helper programs under
 [the SDK's `PROTOCOL.md`](https://github.com/tjd10684-bit/Open-ERP-Module-SDK/blob/main/PROTOCOL.md);
 the U-WAVE helper package is experimental.
 The contract and simulator tests do not establish working physical U-WAVE
 hardware support.
+
+## License
+
+Copyright (C) 2026 TD Manufacturing.
+
+The U-WAVE module is free software: you can redistribute it and modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License or (at your option) any
+later version. It is distributed in the hope that it will be useful, but
+**without any warranty**; without even the implied warranty of merchantability
+or fitness for a particular purpose. See [LICENSE](LICENSE) for the full text.
+
+- **Source code.** This repository is the complete source. Each release's source
+  archive is on its [releases page](https://github.com/tjd10684-bit/U-wave-module/releases),
+  next to the installable package.
+- **What is inside the package.** `mitutoyo-u-wave-<version>.zip` carries
+  `LICENSE` and `THIRD-PARTY-NOTICES.txt` (Python, Tcl/Tk, pyserial, the Open ERP
+  module SDK, the PyInstaller bootloader and the Microsoft C++ runtime, each under
+  its own licence). `build_module.ps1` writes the notices from the build
+  environment with `generate_notices.py`, and stops if a bundled component has no
+  licence text.
+- **The SDK is MIT.** The [Open ERP module SDK](https://github.com/tjd10684-bit/Open-ERP-Module-SDK)
+  that this module is written against is MIT licensed, so other manufacturers'
+  modules may use any licence. Open ERP and this module run as separate programs
+  and talk over JSON-RPC.
+- **Mitutoyo software is not included.** U-WAVEPAK and its drivers are Mitutoyo's
+  and are installed separately under Mitutoyo's own terms.

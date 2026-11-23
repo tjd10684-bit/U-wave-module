@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,9 @@ name = "uwave-accessory"
 version = "0.0.1"
 description = "Mitutoyo U-WAVE-R measurement module for Open ERP"
 requires-python = ">=3.12"
+authors = [{ name = "TD Manufacturing" }]
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 dependencies = []
 
 [project.optional-dependencies]

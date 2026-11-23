@@ -1,5 +1,16 @@
 # Project handoff
 
+Updated 2026-11-23: **licensed AGPL-3.0-or-later** (Copyright (C) 2026 TD Manufacturing). `LICENSE` is
+the unmodified AGPL text; `pyproject.toml` and the README carry the licence. `build_module.ps1` now
+puts `LICENSE` and a generated `THIRD-PARTY-NOTICES.txt` (Python, Tcl/Tk, pyserial, the SDK, the
+PyInstaller bootloader and the Microsoft C++ runtime) inside the module zip; `generate_notices.py`
+reads the build environment and fails the build if a bundled component has no licence text.
+pyserial 3.5's wheel ships no licence text, so its BSD-3-Clause text is kept verbatim in
+`licenses/pyserial-3.5-LICENSE.txt` (from the upstream v3.5 tag) and is used only for exactly that
+version. Tests: 168 pass. **Not yet released:** the published v0.2.1 zip has no licence files; the next
+module release (0.2.2) will carry them (the SDK got its MIT licence in `main` on the same day, not yet
+tagged; the module still pins SDK `v1.2.0`).
+
 Updated 2026-11-22: **To do (owner, when at the hardware PC):**
 
 - **Test a real in-app module update.** On a PC with U-WAVE 0.1.1 or 0.2.0 installed, run Open ERP's

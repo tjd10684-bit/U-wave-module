@@ -23,6 +23,11 @@ $folder = Join-Path $dist "mitutoyo-u-wave"
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
 Copy-Item (Join-Path $module "module.toml") $folder
+# The module is AGPL-3.0-or-later and bundles other open-source software, so its licence and the notices
+# for every bundled component travel inside the package.
+Copy-Item (Join-Path $root "LICENSE") (Join-Path $folder "LICENSE")
+& $Python (Join-Path $root "generate_notices.py") (Join-Path $folder "THIRD-PARTY-NOTICES.txt")
+if ($LASTEXITCODE -ne 0) { throw "Could not write THIRD-PARTY-NOTICES.txt; fix the problems listed above." }
 $env:PYTHONPATH = $source
 & $Python -m open_erp_module.host_check $folder
 if ($LASTEXITCODE -ne 0) { throw "The built module failed host_check." }
